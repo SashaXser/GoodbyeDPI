@@ -7,8 +7,6 @@ WINDIVERTLIBS = ../../binary
 MINGWLIB = /usr/x86_64-w64-mingw32/lib/
 
 TARGET = goodbyedpi.exe
-# Linking SSP does not work for some reason, the executable doesn't start.
-#LIBS = -L$(WINDIVERTLIBS) -Wl,-Bstatic -lssp -Wl,-Bdynamic -lWinDivert -lws2_32
 LIBS = -L$(WINDIVERTLIBS) -lWinDivert -lws2_32 -l:libssp.a
 CC = $(CPREFIX)gcc
 
@@ -26,7 +24,7 @@ CFLAGS = -std=c99 -pipe -I$(WINDIVERTHEADERS) \
          -Wformat-signedness -Wstrict-overflow=2 \
          -Wcast-align \
          -Wfloat-equal -Wsign-conversion \
-         #-fstack-protector-strong
+         -mcpu=skylake \
 LDFLAGS = -fstack-protector -Wl,-O3,--dynamicbase,--nxcompat,--sort-common,--as-needed \
 -Wl,--disable-auto-image-base
 
