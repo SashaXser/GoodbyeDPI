@@ -17,14 +17,15 @@ ifeq (, $(shell which $(CPREFIX)windres))
 	CCWINDRES = windres
 endif
 
-CFLAGS = -std=c99 -pipe -I$(WINDIVERTHEADERS) -L$(WINDIVERTLIBS) \
+CFLAGS = -std=c2x -pipe -I$(WINDIVERTHEADERS) \
          -O2 -D_FORTIFY_SOURCE=2 -fstack-protector \
-         -Wall -Wextra -Wpedantic -Wformat=2 -Wformat-overflow=2 -Wformat-truncation=2 \
+         -Wall -Wextra -Wpedantic -Wformat=2 -Wformat-overflow -Wformat-truncation \
          -Wformat-security -Wno-format-nonliteral -Wshadow -Wstrict-aliasing=1 \
-         -Wnull-dereference -Warray-bounds=2 -Wimplicit-fallthrough=3 \
-         -Wstringop-overflow=4 \
-         -Wformat-signedness -Wstrict-overflow=2 -Wcast-align=strict \
-         -Wfloat-equal -Wcast-align -Wsign-conversion \
+         -Wnull-dereference -Warray-bounds -Wimplicit-fallthrough \
+         -Wshift-overflow \
+         -Wformat-signedness -Wstrict-overflow=2 \
+         -Wcast-align \
+         -Wfloat-equal -Wsign-conversion \
          #-fstack-protector-strong
 LDFLAGS = -fstack-protector -Wl,-O3,--dynamicbase,--nxcompat,--sort-common,--as-needed \
 -Wl,--disable-auto-image-base
