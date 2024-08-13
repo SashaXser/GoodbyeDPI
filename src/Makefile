@@ -24,7 +24,8 @@ CFLAGS = -std=c99 -pipe -I$(WINDIVERTHEADERS) \
          -Wformat-signedness -Wstrict-overflow=2 \
          -Wcast-align \
          -Wfloat-equal -Wsign-conversion \
-         -mcpu=skylake \
+         -march=skylake -mtune=skylake \
+         #-fstack-protector-strong
 LDFLAGS = -fstack-protector -Wl,-O3,--dynamicbase,--nxcompat,--sort-common,--as-needed \
 -Wl,--disable-auto-image-base
 
