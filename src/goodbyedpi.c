@@ -234,7 +234,6 @@ static void add_ip_id_str(int id) {
 
 static void add_maxpayloadsize_str(unsigned short maxpayload) {
     char *newstr;
-    /* 0x47455420 is "GET ", 0x504F5354 is "POST", big endian. */
     const char *maxpayloadsize_str =
         "and (tcp.PayloadLength ? tcp.PayloadLength < %hu " \
           "or tcp.Payload32[0] == 0x47455420 or tcp.Payload32[0] == 0x504F5354 " \
@@ -262,46 +261,35 @@ static void finalize_filter_strings() {
     filter_passive_string = newstr;
 }
 
-static char* dumb_memmem(const char* haystack, unsigned int hlen,
+static inline char* dumb_memmem(const char* haystack, unsigned int hlen,
                          const char* needle, unsigned int nlen)
 {
-    // naive implementation
     if (nlen > hlen) return NULL;
-    size_t i;
-    for (i=0; i<hlen-nlen+1; i++) {
-        if (memcmp(haystack+i,needle,nlen)==0) {
-            return (char*)(haystack+i);
+    for (unsigned int i = 0; i <= hlen - nlen; i++) {
+        if (memcmp(haystack + i, needle, nlen) == 0) {
+            return (char*)(haystack + i);
         }
     }
     return NULL;
 }
 
-unsigned short int atousi(const char *str, const char *msg) {
-    long unsigned int res = strtoul(str, NULL, 10u);
-    enum {
-        limitValue=0xFFFFu
-    };
-
-    if(res > limitValue) {
+static inline unsigned short int atousi(const char *str, const char *msg) {
+    unsigned long int res = strtoul(str, NULL, 10);
+    if (res > UINT16_MAX) {
         puts(msg);
         exit(ERROR_ATOUSI);
     }
     return (unsigned short int)res;
 }
 
-BYTE atoub(const char *str, const char *msg) {
-    long unsigned int res = strtoul(str, NULL, 10u);
-    enum {
-        limitValue=0xFFu
-    };
-
-    if(res > limitValue) {
+static inline BYTE atoub(const char *str, const char *msg) {
+    unsigned long int res = strtoul(str, NULL, 10);
+    if (res > UINT8_MAX) {
         puts(msg);
         exit(ERROR_AUTOB);
     }
     return (BYTE)res;
 }
-
 
 static HANDLE init(char *filter, UINT64 flags) {
     LPTSTR errormessage = NULL;
@@ -367,23 +355,16 @@ static void sigint_handler(int sig __attribute__((unused))) {
     exit(EXIT_SUCCESS);
 }
 
-static void mix_case(char *pktdata, unsigned int pktlen) {
-    unsigned int i;
-
-    if (pktlen <= 0) return;
-    for (i = 0; i < pktlen; i++) {
-        if (i % 2) {
-            pktdata[i] = (char) toupper(pktdata[i]);
-        }
+static inline void mix_case(char *pktdata, unsigned int pktlen) {
+    for (unsigned int i = 1; i < pktlen; i += 2) {
+        pktdata[i] = toupper((unsigned char)pktdata[i]);
     }
 }
 
 static int is_passivedpi_redirect(const char *pktdata, unsigned int pktlen) {
-    /* First check if this is HTTP 302 redirect */
     if (memcmp(pktdata, http11_redirect_302, sizeof(http11_redirect_302)-1) == 0 ||
         memcmp(pktdata, http10_redirect_302, sizeof(http10_redirect_302)-1) == 0)
     {
-        /* Then check if this is a redirect to new http site with Connection: close */
         if (dumb_memmem(pktdata, pktlen, location_http, sizeof(location_http)-1) &&
             dumb_memmem(pktdata, pktlen, connection_close, sizeof(connection_close)-1)) {
             return TRUE;
@@ -403,17 +384,14 @@ static int find_header_and_get_info(const char *pktdata, unsigned int pktlen,
     *hdrnameaddr = NULL;
     *hdrvalueaddr = NULL;
 
-    /* Search for the header */
     hdr_begin = dumb_memmem(pktdata, pktlen,
                 hdrname, strlen(hdrname));
     if (!hdr_begin) return FALSE;
     if (pktdata > hdr_begin) return FALSE;
 
-    /* Set header address */
     *hdrnameaddr = hdr_begin;
     *hdrvalueaddr = hdr_begin + strlen(hdrname);
 
-    /* Search for header end (\r\n) */
     data_addr_rn = dumb_memmem(*hdrvalueaddr,
                         pktlen - (uintptr_t)(*hdrvalueaddr - pktdata),
                         "\r\n", 2);
@@ -425,47 +403,38 @@ static int find_header_and_get_info(const char *pktdata, unsigned int pktlen,
     return FALSE;
 }
 
-/**
- * Very crude Server Name Indication (TLS ClientHello hostname) extractor.
- */
 static int extract_sni(const char *pktdata, unsigned int pktlen,
                     char **hostnameaddr, unsigned int *hostnamelen) {
     unsigned int ptr = 0;
-    unsigned const char *d = (unsigned const char *)pktdata;
-    unsigned const char *hnaddr = 0;
+    const unsigned char *d = (const unsigned char *)pktdata;
+    const unsigned char *hnaddr = 0;
     int hnlen = 0;
 
     while (ptr + 8 < pktlen) {
-        /* Search for specific Extensions sequence */
-        if (d[ptr] == '\0' && d[ptr+1] == '\0' && d[ptr+2] == '\0' &&
-            d[ptr+4] == '\0' && d[ptr+6] == '\0' && d[ptr+7] == '\0' &&
-            /* Check Extension length, Server Name list length
-            *  and Server Name length relations
-            */
+        if (d[ptr] == 0 && d[ptr+1] == 0 && d[ptr+2] == 0 &&
+            d[ptr+4] == 0 && d[ptr+6] == 0 && d[ptr+7] == 0 &&
             d[ptr+3] - d[ptr+5] == 2 && d[ptr+5] - d[ptr+8] == 3)
-            {
-                if (ptr + 8 + d[ptr+8] > pktlen) {
-                    return FALSE;
-                }
-                hnaddr = &d[ptr+9];
-                hnlen = d[ptr+8];
-                /* Limit hostname size up to 253 bytes */
-                if (hnlen < 3 || hnlen > HOST_MAXLEN) {
-                    return FALSE;
-                }
-                /* Validate that hostname has only ascii lowercase characters */
-                for (int i=0; i<hnlen; i++) {
-                    if (!( (hnaddr[i] >= '0' && hnaddr[i] <= '9') ||
-                         (hnaddr[i] >= 'a' && hnaddr[i] <= 'z') ||
-                         hnaddr[i] == '.' || hnaddr[i] == '-'))
-                    {
-                        return FALSE;
-                    }
-                }
-                *hostnameaddr = (char*)hnaddr;
-                *hostnamelen = (unsigned int)hnlen;
-                return TRUE;
+        {
+            if (ptr + 8 + d[ptr+8] > pktlen) {
+                return FALSE;
             }
+            hnaddr = &d[ptr+9];
+            hnlen = d[ptr+8];
+            if (hnlen < 3 || hnlen > HOST_MAXLEN) {
+                return FALSE;
+            }
+            for (int i = 0; i < hnlen; i++) {
+                if (!((hnaddr[i] >= '0' && hnaddr[i] <= '9') ||
+                     (hnaddr[i] >= 'a' && hnaddr[i] <= 'z') ||
+                     hnaddr[i] == '.' || hnaddr[i] == '-'))
+                {
+                    return FALSE;
+                }
+            }
+            *hostnameaddr = (char*)hnaddr;
+            *hostnamelen = (unsigned int)hnlen;
+            return TRUE;
+        }
         ptr++;
     }
     return FALSE;
@@ -477,7 +446,6 @@ static inline void change_window_size(const PWINDIVERT_TCPHDR ppTcpHdr, unsigned
     }
 }
 
-/* HTTP method end without trailing space */
 static PVOID find_http_method_end(const char *pkt, unsigned int http_frag, int *is_fragmented) {
     unsigned int i;
     for (i = 0; i<(sizeof(http_methods) / sizeof(*http_methods)); i++) {
@@ -486,7 +454,6 @@ static PVOID find_http_method_end(const char *pkt, unsigned int http_frag, int *
                 *is_fragmented = 0;
             return (char*)pkt + strlen(http_methods[i]) - 1;
         }
-        /* Try to find HTTP method in a second part of fragmented packet */
         if ((http_frag == 1 || http_frag == 2) &&
             memcmp(pkt, http_methods[i] + http_frag,
                    strlen(http_methods[i]) - http_frag) == 0
@@ -500,11 +467,6 @@ static PVOID find_http_method_end(const char *pkt, unsigned int http_frag, int *
     return NULL;
 }
 
-/** Fragment and send the packet.
- *
- * This function cuts off the end of the packet (step=0) or
- * the beginning of the packet (step=1) with fragment_size bytes.
- */
 static void send_native_fragment(HANDLE w_filter, WINDIVERT_ADDRESS addr,
                         char *packet, UINT packetLen, PVOID packet_data,
                         UINT packet_dataLen, int packet_v4, int packet_v6,
@@ -533,9 +495,6 @@ static void send_native_fragment(HANDLE w_filter, WINDIVERT_ADDRESS addr,
                 ntohs(ppIpV6Hdr->Length) -
                 packet_dataLen + fragment_size
             );
-        //printf("step0 (%d:%d), pp:%d, was:%d, now:%d\n",
-        //                packet_v4, packet_v6, ntohs(ppIpHdr->Length),
-        //                packetLen, packetLen - packet_dataLen + fragment_size);
         packetLen = packetLen - packet_dataLen + fragment_size;
     }
 
@@ -548,8 +507,6 @@ static void send_native_fragment(HANDLE w_filter, WINDIVERT_ADDRESS addr,
             ppIpV6Hdr->Length = htons(
                 ntohs(ppIpV6Hdr->Length) - fragment_size
             );
-        //printf("step1 (%d:%d), pp:%d, was:%d, now:%d\n", packet_v4, packet_v6, ntohs(ppIpHdr->Length),
-        //                packetLen, packetLen - fragment_size);
         memmove(packet_data,
                 (char*)packet_data + fragment_size,
                 packet_dataLen - fragment_size);
@@ -570,7 +527,6 @@ static void send_native_fragment(HANDLE w_filter, WINDIVERT_ADDRESS addr,
         NULL, &addr
     );
     memcpy(packet, packet_bak, orig_packetLen);
-    //printf("Sent native fragment of %d size (step%d)\n", packetLen, step);
 }
 
 int main(int argc, char *argv[]) {
