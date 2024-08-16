@@ -201,65 +201,48 @@ static void add_filter_str(int proto, int port) {
     const char *tcp = " or (tcp and !impostor and !loopback " MAXPAYLOADSIZE_TEMPLATE " and " \
                       "(tcp.SrcPort == %d or tcp.DstPort == %d))";
 
-    char *current_filter = filter_string;
-    size_t new_filter_size = strlen(current_filter) +
-            (proto == IPPROTO_UDP ? strlen(udp) : strlen(tcp)) + 16;
-    char *new_filter = malloc(new_filter_size);
-
-    strcpy(new_filter, current_filter);
+    char *new_filter;
     if (proto == IPPROTO_UDP)
-        sprintf(new_filter + strlen(new_filter), udp, port, port);
+        asprintf(&new_filter, "%s" udp, filter_string, port, port);
     else
-        sprintf(new_filter + strlen(new_filter), tcp, port, port);
+        asprintf(&new_filter, "%s" tcp, filter_string, port, port);
 
+    free(filter_string);
     filter_string = new_filter;
-    free(current_filter);
 }
 
 static void add_ip_id_str(int id) {
-    char *newstr;
-    const char *ipid = " or ip.Id == %d";
-    char *addfilter = malloc(strlen(ipid) + 16);
+    char *addfilter;
+    asprintf(&addfilter, " or ip.Id == %d", id);
 
-    sprintf(addfilter, ipid, id);
+    filter_string = repl_str(filter_string, IPID_TEMPLATE, addfilter);
+    filter_passive_string = repl_str(filter_passive_string, IPID_TEMPLATE, addfilter);
 
-    newstr = repl_str(filter_string, IPID_TEMPLATE, addfilter);
-    free(filter_string);
-    filter_string = newstr;
-
-    newstr = repl_str(filter_passive_string, IPID_TEMPLATE, addfilter);
-    free(filter_passive_string);
-    filter_passive_string = newstr;
+    free(addfilter);
 }
 
 static void add_maxpayloadsize_str(unsigned short maxpayload) {
-    char *newstr;
+    char *addfilter;
     /* 0x47455420 is "GET ", 0x504F5354 is "POST", big endian. */
     const char *maxpayloadsize_str =
         "and (tcp.PayloadLength ? tcp.PayloadLength < %hu " \
           "or tcp.Payload32[0] == 0x47455420 or tcp.Payload32[0] == 0x504F5354 " \
           "or (tcp.Payload[0] == 0x16 and tcp.Payload[1] == 0x03 and tcp.Payload[2] <= 0x03): true)";
-    char *addfilter = malloc(strlen(maxpayloadsize_str) + 16);
 
-    sprintf(addfilter, maxpayloadsize_str, maxpayload);
+    asprintf(&addfilter, maxpayloadsize_str, maxpayload);
 
-    newstr = repl_str(filter_string, MAXPAYLOADSIZE_TEMPLATE, addfilter);
-    free(filter_string);
-    filter_string = newstr;
+    filter_string = repl_str(filter_string, MAXPAYLOADSIZE_TEMPLATE, addfilter);
+    free(addfilter);
 }
 
 static void finalize_filter_strings() {
-    char *newstr, *newstr2;
+    char *newstr;
 
-    newstr2 = repl_str(filter_string, IPID_TEMPLATE, "");
-    newstr = repl_str(newstr2, MAXPAYLOADSIZE_TEMPLATE, "");
+    newstr = repl_str(repl_str(filter_string, IPID_TEMPLATE, ""), MAXPAYLOADSIZE_TEMPLATE, "");
     free(filter_string);
-    free(newstr2);
     filter_string = newstr;
 
-    newstr = repl_str(filter_passive_string, IPID_TEMPLATE, "");
-    free(filter_passive_string);
-    filter_passive_string = newstr;
+    filter_passive_string = repl_str(filter_passive_string, IPID_TEMPLATE, "");
 }
 
 static char* dumb_memmem(const char* haystack, unsigned int hlen,
@@ -370,10 +353,9 @@ static void sigint_handler(int sig __attribute__((unused))) {
 static void mix_case(char *pktdata, unsigned int pktlen) {
     unsigned int i;
 
-    if (pktlen <= 0) return;
     for (i = 0; i < pktlen; i++) {
         if (i % 2) {
-            pktdata[i] = (char) toupper(pktdata[i]);
+            pktdata[i] = toupper(pktdata[i]);
         }
     }
 }
@@ -396,33 +378,29 @@ static int find_header_and_get_info(const char *pktdata, unsigned int pktlen,
                 const char *hdrname,
                 char **hdrnameaddr,
                 char **hdrvalueaddr, unsigned int *hdrvaluelen) {
-    char *data_addr_rn;
-    char *hdr_begin;
+    const char *hdr_begin;
+    const char *data_addr_rn;
 
     *hdrvaluelen = 0u;
     *hdrnameaddr = NULL;
     *hdrvalueaddr = NULL;
 
     /* Search for the header */
-    hdr_begin = dumb_memmem(pktdata, pktlen,
-                hdrname, strlen(hdrname));
-    if (!hdr_begin) return FALSE;
-    if (pktdata > hdr_begin) return FALSE;
+    hdr_begin = strstr(pktdata, hdrname);
+    if (!hdr_begin || pktdata > hdr_begin) return false;
 
     /* Set header address */
-    *hdrnameaddr = hdr_begin;
-    *hdrvalueaddr = hdr_begin + strlen(hdrname);
+    *hdrnameaddr = (char *)hdr_begin;
+    *hdrvalueaddr = (char *)(hdr_begin + strlen(hdrname));
 
     /* Search for header end (\r\n) */
-    data_addr_rn = dumb_memmem(*hdrvalueaddr,
-                        pktlen - (uintptr_t)(*hdrvalueaddr - pktdata),
-                        "\r\n", 2);
+    data_addr_rn = memmem(*hdrvalueaddr, pktlen - (*hdrvalueaddr - pktdata), "\r\n", 2);
     if (data_addr_rn) {
-        *hdrvaluelen = (uintptr_t)(data_addr_rn - *hdrvalueaddr);
+        *hdrvaluelen = data_addr_rn - *hdrvalueaddr;
         if (*hdrvaluelen >= 3 && *hdrvaluelen <= HOST_MAXLEN)
-            return TRUE;
+            return true;
     }
-    return FALSE;
+    return false;
 }
 
 /**
@@ -480,21 +458,12 @@ static inline void change_window_size(const PWINDIVERT_TCPHDR ppTcpHdr, unsigned
 /* HTTP method end without trailing space */
 static PVOID find_http_method_end(const char *pkt, unsigned int http_frag, int *is_fragmented) {
     unsigned int i;
-    for (i = 0; i<(sizeof(http_methods) / sizeof(*http_methods)); i++) {
-        if (memcmp(pkt, http_methods[i], strlen(http_methods[i])) == 0) {
+    for (i = 0; i < (sizeof(http_methods) / sizeof(*http_methods)); i++) {
+        size_t method_len = strlen(http_methods[i]);
+        if (memcmp(pkt, http_methods[i], method_len - http_frag) == 0) {
             if (is_fragmented)
-                *is_fragmented = 0;
-            return (char*)pkt + strlen(http_methods[i]) - 1;
-        }
-        /* Try to find HTTP method in a second part of fragmented packet */
-        if ((http_frag == 1 || http_frag == 2) &&
-            memcmp(pkt, http_methods[i] + http_frag,
-                   strlen(http_methods[i]) - http_frag) == 0
-           )
-        {
-            if (is_fragmented)
-                *is_fragmented = 1;
-            return (char*)pkt + strlen(http_methods[i]) - http_frag - 1;
+                *is_fragmented = (http_frag != 0);
+            return (char*)pkt + method_len - http_frag - 1;
         }
     }
     return NULL;

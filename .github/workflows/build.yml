@@ -15,7 +15,7 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -23,11 +23,6 @@ jobs:
         id: vars
         run: |
           echo "::set-output name=sha_short::$(git rev-parse --short HEAD)"
-
-      - name: Install dependencies
-        run: |
-          sudo apt update &&
-          sudo apt install -y wget unzip
 
       - name: Download and install LLVM-Mingw
         run: |
