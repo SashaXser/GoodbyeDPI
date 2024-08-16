@@ -378,29 +378,33 @@ static int find_header_and_get_info(const char *pktdata, unsigned int pktlen,
                 const char *hdrname,
                 char **hdrnameaddr,
                 char **hdrvalueaddr, unsigned int *hdrvaluelen) {
-    const char *hdr_begin;
-    const char *data_addr_rn;
+    char *data_addr_rn;
+    char *hdr_begin;
 
     *hdrvaluelen = 0u;
     *hdrnameaddr = NULL;
     *hdrvalueaddr = NULL;
 
     /* Search for the header */
-    hdr_begin = strstr(pktdata, hdrname);
-    if (!hdr_begin || pktdata > hdr_begin) return false;
+    hdr_begin = dumb_memmem(pktdata, pktlen,
+                hdrname, strlen(hdrname));
+    if (!hdr_begin) return FALSE;
+    if (pktdata > hdr_begin) return FALSE;
 
     /* Set header address */
-    *hdrnameaddr = (char *)hdr_begin;
-    *hdrvalueaddr = (char *)(hdr_begin + strlen(hdrname));
+    *hdrnameaddr = hdr_begin;
+    *hdrvalueaddr = hdr_begin + strlen(hdrname);
 
     /* Search for header end (\r\n) */
-    data_addr_rn = memmem(*hdrvalueaddr, pktlen - (*hdrvalueaddr - pktdata), "\r\n", 2);
+    data_addr_rn = dumb_memmem(*hdrvalueaddr,
+                        pktlen - (uintptr_t)(*hdrvalueaddr - pktdata),
+                        "\r\n", 2);
     if (data_addr_rn) {
-        *hdrvaluelen = data_addr_rn - *hdrvalueaddr;
+        *hdrvaluelen = (uintptr_t)(data_addr_rn - *hdrvalueaddr);
         if (*hdrvaluelen >= 3 && *hdrvaluelen <= HOST_MAXLEN)
-            return true;
+            return TRUE;
     }
-    return false;
+    return FALSE;
 }
 
 /**
@@ -458,12 +462,21 @@ static inline void change_window_size(const PWINDIVERT_TCPHDR ppTcpHdr, unsigned
 /* HTTP method end without trailing space */
 static PVOID find_http_method_end(const char *pkt, unsigned int http_frag, int *is_fragmented) {
     unsigned int i;
-    for (i = 0; i < (sizeof(http_methods) / sizeof(*http_methods)); i++) {
-        size_t method_len = strlen(http_methods[i]);
-        if (memcmp(pkt, http_methods[i], method_len - http_frag) == 0) {
+    for (i = 0; i<(sizeof(http_methods) / sizeof(*http_methods)); i++) {
+        if (memcmp(pkt, http_methods[i], strlen(http_methods[i])) == 0) {
             if (is_fragmented)
-                *is_fragmented = (http_frag != 0);
-            return (char*)pkt + method_len - http_frag - 1;
+                *is_fragmented = 0;
+            return (char*)pkt + strlen(http_methods[i]) - 1;
+        }
+        /* Try to find HTTP method in a second part of fragmented packet */
+        if ((http_frag == 1 || http_frag == 2) &&
+            memcmp(pkt, http_methods[i] + http_frag,
+                   strlen(http_methods[i]) - http_frag) == 0
+           )
+        {
+            if (is_fragmented)
+                *is_fragmented = 1;
+            return (char*)pkt + strlen(http_methods[i]) - http_frag - 1;
         }
     }
     return NULL;
