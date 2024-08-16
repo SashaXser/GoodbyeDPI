@@ -194,36 +194,42 @@ static struct option long_options[] = {
 
 static char *filter_string = NULL;
 static char *filter_passive_string = NULL;
+
 static void add_filter_str(int proto, int port) {
     const char *udp = " or (udp and !impostor and !loopback and " \
                       "(udp.SrcPort == %d or udp.DstPort == %d))";
     const char *tcp = " or (tcp and !impostor and !loopback " MAXPAYLOADSIZE_TEMPLATE " and " \
                       "(tcp.SrcPort == %d or tcp.DstPort == %d))";
 
-    char *new_filter;
-    if (proto == IPPROTO_UDP) {
-        asprintf(&new_filter, "%s%s", filter_string, udp, port, port);
-    } else {
-        asprintf(&new_filter, "%s%s", filter_string, tcp, port, port);
-    }
+    char *current_filter = filter_string;
+    size_t new_filter_size = strlen(current_filter) +
+            (proto == IPPROTO_UDP ? strlen(udp) : strlen(tcp)) + 16;
+    char *new_filter = malloc(new_filter_size);
 
-    free(filter_string);
+    strcpy(new_filter, current_filter);
+    if (proto == IPPROTO_UDP)
+        sprintf(new_filter + strlen(new_filter), udp, port, port);
+    else
+        sprintf(new_filter + strlen(new_filter), tcp, port, port);
+
     filter_string = new_filter;
+    free(current_filter);
 }
 
 static void add_ip_id_str(int id) {
-    char *addfilter;
-    asprintf(&addfilter, " or ip.Id == %d", id);
+    char *newstr;
+    const char *ipid = " or ip.Id == %d";
+    char *addfilter = malloc(strlen(ipid) + 16);
 
-    char *newstr = repl_str(filter_string, IPID_TEMPLATE, addfilter);
+    sprintf(addfilter, ipid, id);
+
+    newstr = repl_str(filter_string, IPID_TEMPLATE, addfilter);
     free(filter_string);
     filter_string = newstr;
 
     newstr = repl_str(filter_passive_string, IPID_TEMPLATE, addfilter);
     free(filter_passive_string);
     filter_passive_string = newstr;
-
-    free(addfilter);
 }
 
 static void add_maxpayloadsize_str(unsigned short maxpayload) {
