@@ -353,9 +353,10 @@ static void sigint_handler(int sig __attribute__((unused))) {
 static void mix_case(char *pktdata, unsigned int pktlen) {
     unsigned int i;
 
+    if (pktlen <= 0) return;
     for (i = 0; i < pktlen; i++) {
         if (i % 2) {
-            pktdata[i] = toupper(pktdata[i]);
+            pktdata[i] = (char) toupper(pktdata[i]);
         }
     }
 }
