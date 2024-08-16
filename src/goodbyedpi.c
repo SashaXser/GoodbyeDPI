@@ -201,48 +201,65 @@ static void add_filter_str(int proto, int port) {
     const char *tcp = " or (tcp and !impostor and !loopback " MAXPAYLOADSIZE_TEMPLATE " and " \
                       "(tcp.SrcPort == %d or tcp.DstPort == %d))";
 
-    char *new_filter;
-    if (proto == IPPROTO_UDP)
-        asprintf(&new_filter, "%s" udp, filter_string, port, port);
-    else
-        asprintf(&new_filter, "%s" tcp, filter_string, port, port);
+    char *current_filter = filter_string;
+    size_t new_filter_size = strlen(current_filter) +
+            (proto == IPPROTO_UDP ? strlen(udp) : strlen(tcp)) + 16;
+    char *new_filter = malloc(new_filter_size);
 
-    free(filter_string);
+    strcpy(new_filter, current_filter);
+    if (proto == IPPROTO_UDP)
+        sprintf(new_filter + strlen(new_filter), udp, port, port);
+    else
+        sprintf(new_filter + strlen(new_filter), tcp, port, port);
+
     filter_string = new_filter;
+    free(current_filter);
 }
 
 static void add_ip_id_str(int id) {
-    char *addfilter;
-    asprintf(&addfilter, " or ip.Id == %d", id);
+    char *newstr;
+    const char *ipid = " or ip.Id == %d";
+    char *addfilter = malloc(strlen(ipid) + 16);
 
-    filter_string = repl_str(filter_string, IPID_TEMPLATE, addfilter);
-    filter_passive_string = repl_str(filter_passive_string, IPID_TEMPLATE, addfilter);
+    sprintf(addfilter, ipid, id);
 
-    free(addfilter);
+    newstr = repl_str(filter_string, IPID_TEMPLATE, addfilter);
+    free(filter_string);
+    filter_string = newstr;
+
+    newstr = repl_str(filter_passive_string, IPID_TEMPLATE, addfilter);
+    free(filter_passive_string);
+    filter_passive_string = newstr;
 }
 
 static void add_maxpayloadsize_str(unsigned short maxpayload) {
-    char *addfilter;
+    char *newstr;
     /* 0x47455420 is "GET ", 0x504F5354 is "POST", big endian. */
     const char *maxpayloadsize_str =
         "and (tcp.PayloadLength ? tcp.PayloadLength < %hu " \
           "or tcp.Payload32[0] == 0x47455420 or tcp.Payload32[0] == 0x504F5354 " \
           "or (tcp.Payload[0] == 0x16 and tcp.Payload[1] == 0x03 and tcp.Payload[2] <= 0x03): true)";
+    char *addfilter = malloc(strlen(maxpayloadsize_str) + 16);
 
-    asprintf(&addfilter, maxpayloadsize_str, maxpayload);
+    sprintf(addfilter, maxpayloadsize_str, maxpayload);
 
-    filter_string = repl_str(filter_string, MAXPAYLOADSIZE_TEMPLATE, addfilter);
-    free(addfilter);
+    newstr = repl_str(filter_string, MAXPAYLOADSIZE_TEMPLATE, addfilter);
+    free(filter_string);
+    filter_string = newstr;
 }
 
 static void finalize_filter_strings() {
-    char *newstr;
+    char *newstr, *newstr2;
 
-    newstr = repl_str(repl_str(filter_string, IPID_TEMPLATE, ""), MAXPAYLOADSIZE_TEMPLATE, "");
+    newstr2 = repl_str(filter_string, IPID_TEMPLATE, "");
+    newstr = repl_str(newstr2, MAXPAYLOADSIZE_TEMPLATE, "");
     free(filter_string);
+    free(newstr2);
     filter_string = newstr;
 
-    filter_passive_string = repl_str(filter_passive_string, IPID_TEMPLATE, "");
+    newstr = repl_str(filter_passive_string, IPID_TEMPLATE, "");
+    free(filter_passive_string);
+    filter_passive_string = newstr;
 }
 
 static char* dumb_memmem(const char* haystack, unsigned int hlen,
