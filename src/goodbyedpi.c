@@ -84,7 +84,7 @@ WINSOCK_API_LINKAGE INT WSAAPI inet_pton(INT Family, LPCSTR pStringBuf, PVOID pA
         "and udp.Payload[0] >= 0xC0 and udp.Payload32[1b] == 0x01"
 #define FILTER_PASSIVE_STRING_TEMPLATE "inbound and ip and tcp and " \
         "!impostor and !loopback and " \
-        "((ip.Id <= 0xF and ip.Id >= 0x0) " IPID_TEMPLATE ") and " \
+        "(true " IPID_TEMPLATE ") and " \
         "(tcp.SrcPort == 443 or tcp.SrcPort == 80) and tcp.Rst and " \
         DIVERT_NO_LOCALNETSv4_SRC
 
@@ -188,7 +188,7 @@ static struct option long_options[] = {
     {"native-frag", no_argument,       0,  '*' },
     {"reverse-frag",no_argument,       0,  '(' },
     {"max-payload", optional_argument, 0,  '|' },
-    {"debug-exit",  optional_argument, 0,  '?' },
+    {"debug-exit",  optional_argument, 0,  'x' },
     {0,             0,                 0,   0  }
 };
 
@@ -897,7 +897,7 @@ int main(int argc, char *argv[]) {
                 else
                     max_payload_size = 1200;
                 break;
-            case '?': // --debug-exit
+            case 'x': // --debug-exit
                 debug_exit = true;
                 break;
             default:
@@ -1080,6 +1080,7 @@ int main(int argc, char *argv[]) {
             die();
     }
     if (debug_exit) {
+        printf("Debug Exit\n");
         exit(EXIT_SUCCESS);
     }
     printf("Filter activated, GoodbyeDPI is now running!\n");
