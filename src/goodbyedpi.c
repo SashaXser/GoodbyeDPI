@@ -24,7 +24,7 @@
 // My mingw installation does not load inet_pton definition for some reason
 WINSOCK_API_LINKAGE INT WSAAPI inet_pton(INT Family, LPCSTR pStringBuf, PVOID pAddr);
 
-#define GOODBYEDPI_VERSION "v0.2.3"
+#define GOODBYEDPI_VERSION "v0.2.3rc3"
 
 #define die() do { sleep(20); exit(EXIT_FAILURE); } while (0)
 
@@ -188,6 +188,9 @@ static struct option long_options[] = {
     {"native-frag", no_argument,       0,  '*' },
     {"reverse-frag",no_argument,       0,  '(' },
     {"max-payload", optional_argument, 0,  '|' },
+    {"fake-from-hex", required_argument, 0,  'u' },
+    {"fake-gen",    required_argument, 0,  'j' },
+    {"fake-resend", required_argument, 0,  't' },
     {"debug-exit",  optional_argument, 0,  'x' },
     {0,             0,                 0,   0  }
 };
@@ -897,6 +900,25 @@ int main(int argc, char *argv[]) {
                 else
                     max_payload_size = 1200;
                 break;
+            case 'u': // --fake-from-hex
+                if (fake_load_from_hex(optarg)) {
+                    printf("WARNING: bad fake HEX value %s\n", optarg);
+                }
+                break;
+            case 'j': // --fake-gen
+                if (fake_load_random(atoub(optarg, "Fake generator parameter error!"), 200)) {
+                    puts("WARNING: fake generator has failed!");
+                }
+                break;
+            case 't': // --fake-resend
+                fakes_resend = atoub(optarg, "Fake resend parameter error!");
+                if (fakes_resend == 1)
+                    puts("WARNING: fake-resend is 1, no resending is in place!");
+                else if (!fakes_resend)
+                    puts("WARNING: fake-resend is 0, fake packet mode is disabled!");
+                else if (fakes_resend > 100)
+                    puts("WARNING: fake-resend value is a little too high, don't you think?");
+                break;
             case 'x': // --debug-exit
                 debug_exit = true;
                 break;
@@ -945,6 +967,13 @@ int main(int argc, char *argv[]) {
                 " --reverse-frag           fragment (split) the packets just as --native-frag, but send them in the\n"
                 "                          reversed order. Works with the websites which could not handle segmented\n"
                 "                          HTTPS TLS ClientHello (because they receive the TCP flow \"combined\").\n"
+                " --fake-from-hex <value>  Load fake packets for Fake Request Mode from HEX values (like 1234abcDEF).\n"
+                "                          This option can be supplied multiple times, in this case each fake packet\n"
+                "                          would be sent on every request in the command line argument order.\n"
+                " --fake-gen <value>       Generate random-filled fake packets for Fake Request Mode, value of them\n"
+                "                          (up to 30).\n"
+                " --fake-resend <value>    Send each fake packet value number of times.\n"
+                "                          Default: 1 (send each packet once).\n"
                 " --max-payload [value]    packets with TCP payload data more than [value] won't be processed.\n"
                 "                          Use this option to reduce CPU usage by skipping huge amount of data\n"
                 "                          (like file transfers) in already established sessions.\n"
@@ -1004,7 +1033,9 @@ int main(int argc, char *argv[]) {
            "Fake requests, TTL: %s (fixed: %hu, auto: %hu-%hu-%hu, min distance: %hu)\n"  /* 17 */
            "Fake requests, wrong checksum: %d\n"    /* 18 */
            "Fake requests, wrong SEQ/ACK: %d\n"     /* 19 */
-           "Max payload size: %hu\n",               /* 20 */
+           "Fake requests, custom payloads: %d\n"   /* 20 */
+           "Fake requests, resend: %d\n"            /* 21 */
+           "Max payload size: %hu\n",               /* 22 */
            do_passivedpi, do_block_quic,                          /* 1 */
            (do_fragment_http ? http_fragment_size : 0),           /* 2 */
            (do_fragment_http_persistent ? http_fragment_size : 0),/* 3 */
@@ -1026,7 +1057,9 @@ int main(int argc, char *argv[]) {
                do_auto_ttl ? auto_ttl_max : 0, ttl_min_nhops,
            do_wrong_chksum, /* 18 */
            do_wrong_seq,    /* 19 */
-           max_payload_size /* 20 */
+           fakes_count,     /* 20 */
+           fakes_resend,    /* 21 */
+           max_payload_size /* 22 */
           );
 
     if (do_fragment_http && http_fragment_size > 2 && !do_native_frag) {
