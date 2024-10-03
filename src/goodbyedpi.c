@@ -385,7 +385,7 @@ int main(int argc, char *argv[]) {
                     if (optimized_memmem(packet_data, packet_dataLen, http_host_find, sizeof(http_host_find) - 1)) {
                         hdr_name_addr = optimized_memmem(packet_data, packet_dataLen, http_host_find, sizeof(http_host_find) - 1);
                         hdr_value_addr = hdr_name_addr + sizeof(http_host_find) - 1;
-                        hdr_value_len = packet_dataLen - (hdr_value_addr - packet_data);
+                        hdr_value_len = packet_dataLen - ((char*)hdr_value_addr - packet_data);
 
                         host_addr = hdr_value_addr;
                         host_len = hdr_value_len;
