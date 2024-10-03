@@ -1189,14 +1189,14 @@ int main(int argc, char *argv[]) {
                 if (!addr.Outbound &&
                     ppTcpHdr->Syn == 1 && ppTcpHdr->Ack == 1) {
                     if (do_fake_packet && (do_auto_ttl || ttl_min_nhops)) {
-                        if (!((packet_v4 && tcp_handle_incoming(ppIpHdr->SrcAddr, ppIpHdr->DstAddr,
-                                        ppTcpHdr->SrcPort, ppTcpHdr->DstPort,
-                                        0, ppIpHdr->TTL))
+                        if (!((packet_v4 && tcp_handle_incoming(&(ppIpHdr->SrcAddr), &(ppIpHdr->DstAddr),
+                                                ppTcpHdr->SrcPort, ppTcpHdr->DstPort,
+                                                0, ppIpHdr->TTL))
                             ||
-                            (packet_v6 && tcp_handle_incoming(ppIpV6Hdr->SrcAddr,
-                                        ppIpV6Hdr->DstAddr,
-                                        ppTcpHdr->SrcPort, ppTcpHdr->DstPort,
-                                        1, ppIpV6Hdr->HopLimit)))) {
+                            (packet_v6 && tcp_handle_incoming(&(ppIpV6Hdr->SrcAddr),
+                                                &(ppIpV6Hdr->DstAddr),
+                                                ppTcpHdr->SrcPort, ppTcpHdr->DstPort,
+                                                1, ppIpV6Hdr->HopLimit)))) {
                             if (do_tcp_verb)
                                 puts("[TCP WARN] Can't add TCP connection record.");
                         }
