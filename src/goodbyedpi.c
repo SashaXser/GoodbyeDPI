@@ -1221,7 +1221,7 @@ int main(int argc, char *argv[]) {
                                         packet_data, packet_dataLen,
                                         &dns_conn_info, 0))
                         ||
-                        (packet_v6 && dns_handle_incoming(ppIpV6Hdr->DstAddr, ppUdpHdr->DstPort,
+                        (packet_v6 && dns_handle_incoming(&ppIpV6Hdr->DstAddr[0], ppUdpHdr->DstPort,
                                         packet_data, packet_dataLen,
                                         &dns_conn_info, 1))) {
                         if (packet_v4)
@@ -1247,8 +1247,8 @@ int main(int argc, char *argv[]) {
                                         &ppIpHdr->DstAddr, ppUdpHdr->DstPort,
                                         packet_data, packet_dataLen, 0))
                         ||
-                        (packet_v6 && dns_handle_outgoing(ppIpV6Hdr->SrcAddr, ppUdpHdr->SrcPort,
-                                        ppIpV6Hdr->DstAddr, ppUdpHdr->DstPort,
+                        (packet_v6 && dns_handle_outgoing(&ppIpV6Hdr->SrcAddr[0], ppUdpHdr->SrcPort,
+                                        &ppIpV6Hdr->DstAddr[0], ppUdpHdr->DstPort,
                                         packet_data, packet_dataLen, 1))) {
                         if (packet_v4) {
                             ppIpHdr->DstAddr = dnsv4_addr;
