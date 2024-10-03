@@ -1055,17 +1055,16 @@ int main(int argc, char *argv[]) {
                         if (packet_v4) {
                             should_reinject = 0;
                         }
-                        else if (packet_v6 && WINDIVERT_IPV6HDR_GET_FLOWLABEL(ppIpV6Hdr) == 0x0) {
-                                should_reinject = 0;
+                        else if (packet_v6 && WINDIVERT_IPV6HDR_GET_FLOWLABEL(&ppIpV6Hdr) == 0x0) {
+                            should_reinject = 0;
                         }
                     }
                 }
                 else if (addr.Outbound &&
                         ((do_fragment_https ? packet_dataLen == https_fragment_size : 0) ||
-                         packet_dataLen > 16) &&
-                         ppTcpHdr->DstPort != htons(80) &&
-                         (do_fake_packet || do_native_frag)
-                        )
+                        packet_dataLen > 16) &&
+                        ppTcpHdr->DstPort != htons(80) &&
+                        (do_fake_packet || do_native_frag))
                 {
                     if ((packet_dataLen == 2 && memcmp(packet_data, "\x16\x03", 2) == 0) ||
                         (packet_dataLen >= 3 && ( memcmp(packet_data, "\x16\x03\x01", 3) == 0 || memcmp(packet_data, "\x16\x03\x03", 3) == 0 )))
@@ -1074,13 +1073,10 @@ int main(int argc, char *argv[]) {
                             sni_ok = extract_sni(packet_data, packet_dataLen,
                                         &host_addr, &host_len);
                         }
-                        if (
-                             (do_blacklist && sni_ok &&
-                              blackwhitelist_check_hostname(host_addr, host_len)
-                             ) ||
-                             (do_blacklist && !sni_ok && do_allow_no_sni) ||
-                             (!do_blacklist)
-                           )
+                        if ((do_blacklist && sni_ok &&
+                            blackwhitelist_check_hostname(host_addr, host_len)) ||
+                            (do_blacklist && !sni_ok && do_allow_no_sni) ||
+                            (!do_blacklist))
                         {
                             if (do_fake_packet) {
                                 TCP_HANDLE_OUTGOING_FAKE_PACKET(send_fake_https_request);
@@ -1095,8 +1091,8 @@ int main(int argc, char *argv[]) {
                         packet_dataLen > 16 &&
                         (do_http_allports ? 1 : (ppTcpHdr->DstPort == htons(80))) &&
                         find_http_method_end(packet_data,
-                                             (do_fragment_http ? http_fragment_size : 0u),
-                                             &http_req_fragmented) &&
+                                            (do_fragment_http ? http_fragment_size : 0u),
+                                            &http_req_fragmented) &&
                         (do_host || do_host_removespace ||
                         do_host_mixedcase || do_fragment_http_persistent ||
                         do_fake_packet))
@@ -1135,7 +1131,7 @@ int main(int argc, char *argv[]) {
                         else if (do_host_removespace) {
                             if (find_header_and_get_info(packet_data, packet_dataLen,
                                                         http_useragent_find, &hdr_name_addr,
-                                                         &hdr_value_addr, &useragent_len))
+                                                        &hdr_value_addr, &useragent_len))
                             {
                                 useragent_addr = hdr_value_addr;
                                 useragent_len = useragent_len;
@@ -1159,8 +1155,7 @@ int main(int argc, char *argv[]) {
                         }
                     }
                 }
-                if (should_reinject && should_recalc_checksum && do_native_frag)
-                {
+                if (should_reinject && should_recalc_checksum && do_native_frag) {
                     current_fragment_size = 0;
                     if (do_fragment_http && ppTcpHdr->DstPort == htons(80)) {
                         current_fragment_size = http_fragment_size;
@@ -1193,8 +1188,8 @@ int main(int argc, char *argv[]) {
                                         ppTcpHdr->SrcPort, ppTcpHdr->DstPort,
                                         0, ppIpHdr->TTL))
                             ||
-                            (packet_v6 && tcp_handle_incoming(ppIpV6Hdr->SrcAddr,
-                                        ppIpV6Hdr->DstAddr,
+                            (packet_v6 && tcp_handle_incoming(&ppIpV6Hdr->SrcAddr,
+                                        &ppIpV6Hdr->DstAddr,
                                         ppTcpHdr->SrcPort, ppTcpHdr->DstPort,
                                         1, ppIpV6Hdr->HopLimit)))) {
                             if (do_tcp_verb)
@@ -1215,74 +1210,43 @@ int main(int argc, char *argv[]) {
                 }
             }
             else if ((do_dnsv4_redirect && (packet_type == ipv4_udp_data)) ||
-                     (do_dnsv6_redirect && (packet_type == ipv6_udp_data))) {
+                    (do_dnsv6_redirect && (packet_type == ipv6_udp_data))) {
                 if (!addr.Outbound) {
                     if ((packet_v4 && dns_handle_incoming(ppIpHdr->DstAddr, ppUdpHdr->DstPort,
                                         packet_data, packet_dataLen,
                                         &dns_conn_info, 0))
                         ||
-                        (packet_v6 && dns_handle_incoming(ppIpV6Hdr->DstAddr, ppUdpHdr->DstPort,
+                        (packet_v6 && dns_handle_incoming(&ppIpV6Hdr->DstAddr, &ppUdpHdr->DstPort,
                                         packet_data, packet_dataLen,
                                         &dns_conn_info, 1))) {
-                        if (packet_v4)
-                            ppIpHdr->SrcAddr = dns_conn_info.dstip[0];
-                        else if (packet_v6)
-                            ipv6_copy_addr(ppIpV6Hdr->SrcAddr, dns_conn_info.dstip);
-                        ppUdpHdr->DstPort = dns_conn_info.srcport;
-                        ppUdpHdr->SrcPort = dns_conn_info.dstport;
-                        should_recalc_checksum = 1;
+                        udp_checksum_zero = 1;
+                        should_reinject = 0;
                     }
-                    else {
-                        if (dns_is_dns_packet(packet_data, packet_dataLen, 0))
-                            should_reinject = 0;
-
-                        if (do_dns_verb && !should_reinject) {
-                            printf("[DNS] Error handling incoming packet: srcport=%hu, dstport=%hu\n",
-                               ntohs(ppUdpHdr->SrcPort), ntohs(ppUdpHdr->DstPort));
-                        }
-                    }
-                }
-                else if (addr.Outbound) {
+                } else {
                     if ((packet_v4 && dns_handle_outgoing(ppIpHdr->SrcAddr, ppUdpHdr->SrcPort,
                                         ppIpHdr->DstAddr, ppUdpHdr->DstPort,
                                         packet_data, packet_dataLen, 0))
                         ||
-                        (packet_v6 && dns_handle_outgoing(ppIpV6Hdr->SrcAddr, ppUdpHdr->SrcPort,
-                                        ppIpV6Hdr->DstAddr, ppUdpHdr->DstPort,
+                        (packet_v6 && dns_handle_outgoing(&ppIpV6Hdr->SrcAddr, &ppUdpHdr->SrcPort,
+                                        &ppIpV6Hdr->DstAddr, &ppUdpHdr->DstPort,
                                         packet_data, packet_dataLen, 1))) {
-                        if (packet_v4) {
-                            ppIpHdr->DstAddr = dnsv4_addr;
-                            ppUdpHdr->DstPort = dnsv4_port;
-                        }
-                        else if (packet_v6) {
-                            ipv6_copy_addr(ppIpV6Hdr->DstAddr, (uint32_t*)dnsv6_addr.s6_addr);
-                            ppUdpHdr->DstPort = dnsv6_port;
-                        }
-                        should_recalc_checksum = 1;
-                    }
-                    else {
-                        if (dns_is_dns_packet(packet_data, packet_dataLen, 1))
-                            should_reinject = 0;
-
-                        if (do_dns_verb && !should_reinject) {
-                            printf("[DNS] Error handling outgoing packet: srcport=%hu, dstport=%hu\n",
-                               ntohs(ppUdpHdr->SrcPort), ntohs(ppUdpHdr->DstPort));
-                        }
+                        udp_checksum_zero = 1;
+                        should_reinject = 0;
                     }
                 }
             }
 
             if (should_reinject) {
                 if (should_recalc_checksum) {
-                    WinDivertHelperCalcChecksums(packet, packetLen, &addr, (UINT64)0LL);
+                    WinDivertHelperCalcChecksums(packet, packetLen, WINDIVERT_HELPER_NO_ICMP_CHECKSUM);
                 }
-                WinDivertSend(w_filter, packet, packetLen, NULL, &addr);
+                if (packet_type == ipv4_udp_data || packet_type == ipv6_udp_data) {
+                    if (udp_checksum_zero && ppUdpHdr->Checksum != 0) {
+                        ppUdpHdr->Checksum = 0;
+                    }
+                }
+                WinDivertSend(w_filter, packet, packetLen, &send_len, &addr);
             }
-        }
-        else {
-            if (!exiting)
-                printf("Error receiving packet!\n");
-            break;
         }
     }
 }
