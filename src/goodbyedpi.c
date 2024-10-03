@@ -1055,16 +1055,16 @@ int main(int argc, char *argv[]) {
                         if (packet_v4) {
                             should_reinject = 0;
                         }
-                        else if (packet_v6 && WINDIVERT_IPV6HDR_GET_FLOWLABEL(&ppIpV6Hdr) == 0x0) {
-                                should_reinject = 0;
+                        else if (packet_v6 && WINDIVERT_IPV6HDR_GET_FLOWLABEL(ppIpV6Hdr) == 0x0) {
+                            should_reinject = 0;
                         }
                     }
                 }
                 else if (addr.Outbound &&
                         ((do_fragment_https ? packet_dataLen == https_fragment_size : 0) ||
-                         packet_dataLen > 16) &&
-                         ppTcpHdr->DstPort != htons(80) &&
-                         (do_fake_packet || do_native_frag)
+                        packet_dataLen > 16) &&
+                        ppTcpHdr->DstPort != htons(80) &&
+                        (do_fake_packet || do_native_frag)
                         )
                 {
                     if ((packet_dataLen == 2 && memcmp(packet_data, "\x16\x03", 2) == 0) ||
@@ -1075,12 +1075,12 @@ int main(int argc, char *argv[]) {
                                         &host_addr, &host_len);
                         }
                         if (
-                             (do_blacklist && sni_ok &&
-                              blackwhitelist_check_hostname(host_addr, host_len)
-                             ) ||
-                             (do_blacklist && !sni_ok && do_allow_no_sni) ||
-                             (!do_blacklist)
-                           )
+                            (do_blacklist && sni_ok &&
+                            blackwhitelist_check_hostname(host_addr, host_len)
+                            ) ||
+                            (do_blacklist && !sni_ok && do_allow_no_sni) ||
+                            (!do_blacklist)
+                        )
                         {
                             if (do_fake_packet) {
                                 TCP_HANDLE_OUTGOING_FAKE_PACKET(send_fake_https_request);
@@ -1095,8 +1095,8 @@ int main(int argc, char *argv[]) {
                         packet_dataLen > 16 &&
                         (do_http_allports ? 1 : (ppTcpHdr->DstPort == htons(80))) &&
                         find_http_method_end(packet_data,
-                                             (do_fragment_http ? http_fragment_size : 0u),
-                                             &http_req_fragmented) &&
+                                            (do_fragment_http ? http_fragment_size : 0u),
+                                            &http_req_fragmented) &&
                         (do_host || do_host_removespace ||
                         do_host_mixedcase || do_fragment_http_persistent ||
                         do_fake_packet))
@@ -1135,7 +1135,7 @@ int main(int argc, char *argv[]) {
                         else if (do_host_removespace) {
                             if (find_header_and_get_info(packet_data, packet_dataLen,
                                                         http_useragent_find, &hdr_name_addr,
-                                                         &hdr_value_addr, &useragent_len))
+                                                        &hdr_value_addr, &useragent_len))
                             {
                                 useragent_addr = hdr_value_addr;
                                 useragent_len = useragent_len;
@@ -1174,7 +1174,7 @@ int main(int argc, char *argv[]) {
                     }
                     if (current_fragment_size) {
                         send_native_fragment(w_filter, addr, packet, packetLen, packet_data,
-                                            packet_dataLen,packet_v4, packet_v6,
+                                            packet_dataLen, packet_v4, packet_v6,
                                             ppIpHdr, ppIpV6Hdr, ppTcpHdr,
                                             current_fragment_size, do_reverse_frag);
                         send_native_fragment(w_filter, addr, packet, packetLen, packet_data,
@@ -1215,7 +1215,7 @@ int main(int argc, char *argv[]) {
                 }
             }
             else if ((do_dnsv4_redirect && (packet_type == ipv4_udp_data)) ||
-                     (do_dnsv6_redirect && (packet_type == ipv6_udp_data))) {
+                    (do_dnsv6_redirect && (packet_type == ipv6_udp_data))) {
                 if (!addr.Outbound) {
                     if ((packet_v4 && dns_handle_incoming(ppIpHdr->DstAddr, ppUdpHdr->DstPort,
                                         packet_data, packet_dataLen,
@@ -1238,7 +1238,7 @@ int main(int argc, char *argv[]) {
 
                         if (do_dns_verb && !should_reinject) {
                             printf("[DNS] Error handling incoming packet: srcport=%hu, dstport=%hu\n",
-                               ntohs(ppUdpHdr->SrcPort), ntohs(ppUdpHdr->DstPort));
+                            ntohs(ppUdpHdr->SrcPort), ntohs(ppUdpHdr->DstPort));
                         }
                     }
                 }
@@ -1255,7 +1255,7 @@ int main(int argc, char *argv[]) {
                             ppUdpHdr->DstPort = dnsv4_port;
                         }
                         else if (packet_v6) {
-                            ipv6_copy_addr(ppIpV6Hdr->DstAddr, (uint32_t*)dnsv6_addr.s6_addr);
+                            ipv6_copy_addr(ppIpV6Hdr->DstAddr, dnsv6_addr.s6_addr);
                             ppUdpHdr->DstPort = dnsv6_port;
                         }
                         should_recalc_checksum = 1;
@@ -1266,7 +1266,7 @@ int main(int argc, char *argv[]) {
 
                         if (do_dns_verb && !should_reinject) {
                             printf("[DNS] Error handling outgoing packet: srcport=%hu, dstport=%hu\n",
-                               ntohs(ppUdpHdr->SrcPort), ntohs(ppUdpHdr->DstPort));
+                            ntohs(ppUdpHdr->SrcPort), ntohs(ppUdpHdr->DstPort));
                         }
                     }
                 }
