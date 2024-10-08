@@ -15,7 +15,7 @@ ifeq (, $(shell which $(CPREFIX)windres))
 	CCWINDRES = windres
 endif
 
-CFLAGS = -pipe -I$(WINDIVERTHEADERS) \
+CFLAGS = -std=c18 -pipe -I$(WINDIVERTHEADERS) \
          -O2 -D_FORTIFY_SOURCE=2 -fstack-protector \
          -Wall -Wextra -Wpedantic -Wformat=2 -Wformat-overflow -Wformat-truncation \
          -Wformat-security -Wno-format-nonliteral -Wshadow -Wstrict-aliasing=1 \
