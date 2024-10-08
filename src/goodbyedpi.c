@@ -88,10 +88,6 @@ WINSOCK_API_LINKAGE INT WSAAPI inet_pton(INT Family, LPCSTR pStringBuf, PVOID pA
     "(" DIVERT_NO_LOCALNETSv4_DST " or " DIVERT_NO_LOCALNETSv6_DST "))" \
     "))"
 
-#define FILTER_PASSIVE_BLOCK_QUIC "outbound and !impostor and !loopback and udp " \
-    "and udp.DstPort == 443 and udp.PayloadLength >= 1200 " \
-    "and udp.Payload[0] >= 0xC0 and udp.Payload32[1b] == 0x01"
-
 #define FILTER_PASSIVE_STRING_TEMPLATE "inbound and ip and tcp and " \
     "!impostor and !loopback and " \
     "(true " IPID_TEMPLATE ") and " \
@@ -208,6 +204,9 @@ static struct option long_options[] = {
 
 static char *filter_string = NULL;
 static char *filter_passive_string = NULL;
+static int do_fragment_udp_ports = 0;
+static const unsigned short fragment_udp_ports[] = {50001, 50002, 50003, 50004};
+static const int num_fragment_udp_ports = sizeof(fragment_udp_ports) / sizeof(fragment_udp_ports[0]);
 
 static void add_filter_str(int proto, int port) {
     const char *udp = " or (udp and !impostor and !loopback and " \
@@ -522,6 +521,61 @@ static void send_native_fragment(HANDLE w_filter, WINDIVERT_ADDRESS addr,
     memcpy(packet, packet_bak, orig_packetLen);
 }
 
+void fragment_udp_packet(HANDLE w_filter, WINDIVERT_ADDRESS addr,
+                         char *packet, UINT packetLen, int packet_v4, int packet_v6,
+                         PWINDIVERT_IPHDR ppIpHdr, PWINDIVERT_IPV6HDR ppIpV6Hdr, PWINDIVERT_UDPHDR ppUdpHdr,
+                         PVOID packet_data, UINT packet_dataLen, UINT fragment_size)
+{
+    UINT header_len;
+    UINT max_fragment_size;
+    UINT num_fragments;
+    UINT fragment_payload_len;
+    UINT fragment_packet_len;
+    PWINDIVERT_IPHDR ip_header;
+    PWINDIVERT_IPV6HDR ipv6_header;
+    char fragment_packet[MAX_PACKET_SIZE];
+    UINT fragment_offset;
+
+    if (packet_v4) {
+        header_len = (ppIpHdr->HeaderLength * 4);
+        max_fragment_size = fragment_size - header_len;
+        if (max_fragment_size % 8 != 0) {
+            max_fragment_size -= max_fragment_size % 8;
+        }
+        if (max_fragment_size == 0) {
+            printf("Fragment size too small.\n");
+            return;
+        }
+        num_fragments = (packet_dataLen + max_fragment_size - 1) / max_fragment_size;
+
+        for (UINT i = 0; i < num_fragments; i++) {
+            memset(fragment_packet, 0, sizeof(fragment_packet));
+
+            ip_header = (PWINDIVERT_IPHDR)fragment_packet;
+            memcpy(ip_header, ppIpHdr, header_len);
+            ip_header->HeaderLength = header_len / 4;
+            fragment_payload_len = ((i < num_fragments - 1) ? max_fragment_size : (packet_dataLen - i * max_fragment_size));
+            fragment_packet_len = header_len + fragment_payload_len;
+            ip_header->Length = htons(fragment_packet_len);
+            fragment_offset = (i * max_fragment_size) / 8;
+            ip_header->FragmentOffset = htons(fragment_offset);
+            if (i < num_fragments - 1) {
+                ip_header->FragmentOffset |= htons(IP_MF);
+            }
+
+            memcpy(fragment_packet + header_len, (char *)packet_data + i * max_fragment_size, fragment_payload_len);
+
+            addr.IPChecksum = 0;
+            WinDivertHelperCalcChecksums(fragment_packet, fragment_packet_len, &addr, 0);
+
+            WinDivertSend(w_filter, fragment_packet, fragment_packet_len, NULL, &addr);
+        }
+    } else if (packet_v6) {
+        printf("IPv6 fragmentation is not implemented.\n");
+        return;
+    }
+}
+
 int main(int argc, char *argv[]) {
     static enum packet_type_e {
         unknown,
@@ -546,7 +600,7 @@ int main(int argc, char *argv[]) {
     conntrack_info_t dns_conn_info;
     tcp_conntrack_info_t tcp_conn_info;
 
-    int do_passivedpi = 0, do_block_quic = 0,
+    int do_passivedpi = 0,
         do_fragment_http = 0,
         do_fragment_http_persistent = 0,
         do_fragment_http_persistent_nowait = 0,
@@ -627,7 +681,6 @@ int main(int argc, char *argv[]) {
         do_fake_packet = 1;
         do_wrong_chksum = 1;
         do_wrong_seq = 1;
-        do_block_quic = 1;
         max_payload_size = 1200;
     }
 
@@ -673,7 +726,6 @@ int main(int argc, char *argv[]) {
                 max_payload_size = 1200;
                 break;
             case '9': // +7+8
-                do_block_quic = 1;
                 // fall through
             case '8': // +7
                 do_wrong_seq = 1;
@@ -691,7 +743,7 @@ int main(int argc, char *argv[]) {
                 do_passivedpi = 1;
                 break;
             case 'q':
-                do_block_quic = 1;
+                do_fragment_udp_ports = 1;
                 break;
             case 'r':
                 do_host = 1;
@@ -718,7 +770,6 @@ int main(int argc, char *argv[]) {
             case 'n':
                 do_fragment_http_persistent = 1;
                 do_fragment_http_persistent_nowait = 1;
-                do_native_frag = 1;
                 break;
             case 'e':
                 do_fragment_https = 1;
@@ -920,7 +971,7 @@ int main(int argc, char *argv[]) {
             default:
                 puts("Usage: goodbyedpi.exe [OPTION...]\n"
                 " -p          block passive DPI\n"
-                " -q          block QUIC/HTTP3\n"
+                " -q          fragment UDP packets on ports 50001,50002,50003,50004\n"
                 " -r          replace Host with hoSt\n"
                 " -s          remove space between host header and its value\n"
                 " -a          additional space between Method and Request-URI (enables -s, may break sites)\n"
@@ -990,7 +1041,7 @@ int main(int argc, char *argv[]) {
                 " -6          -f 2 -e 2 --wrong-seq --reverse-frag --max-payload\n"
                 " -7          -f 2 -e 2 --wrong-chksum --reverse-frag --max-payload\n"
                 " -8          -f 2 -e 2 --wrong-seq --wrong-chksum --reverse-frag --max-payload\n"
-                " -9          -f 2 -e 2 --wrong-seq --wrong-chksum --reverse-frag --max-payload -q (this is the default)\n\n"
+                " -9          -f 2 -e 2 --wrong-seq --wrong-chksum --reverse-frag --max-payload\n\n"
                 "Note: combination of --wrong-seq and --wrong-chksum generates two different fake packets.\n"
                 );
                 exit(ERROR_DEFAULT);
@@ -1013,7 +1064,6 @@ int main(int argc, char *argv[]) {
     }
 
     printf("Block passive: %d\n"                    /* 1 */
-           "Block QUIC/HTTP3: %d\n"                 /* 1 */
            "Fragment HTTP: %u\n"                    /* 2 */
            "Fragment persistent HTTP: %u\n"         /* 3 */
            "Fragment HTTPS: %u\n"                   /* 4 */
@@ -1035,7 +1085,7 @@ int main(int argc, char *argv[]) {
            "Fake requests, custom payloads: %d\n"   /* 20 */
            "Fake requests, resend: %d\n"            /* 21 */
            "Max payload size: %hu\n",               /* 22 */
-           do_passivedpi, do_block_quic,                          /* 1 */
+           do_passivedpi,                                         /* 1 */
            (do_fragment_http ? http_fragment_size : 0),           /* 2 */
            (do_fragment_http_persistent ? http_fragment_size : 0),/* 3 */
            (do_fragment_https ? https_fragment_size : 0),         /* 4 */
@@ -1089,15 +1139,6 @@ int main(int argc, char *argv[]) {
         filter_num++;
     }
 
-    if (do_block_quic) {
-        filters[filter_num] = init(
-            FILTER_PASSIVE_BLOCK_QUIC,
-            WINDIVERT_FLAG_DROP);
-        if (filters[filter_num] == NULL)
-            die();
-        filter_num++;
-    }
-
     /* 
      * IPv4 & IPv6 filter for inbound HTTP redirection packets and
      * active DPI circumvention
@@ -1120,8 +1161,6 @@ int main(int argc, char *argv[]) {
 
     while (1) {
         if (WinDivertRecv(w_filter, packet, sizeof(packet), &packetLen, &addr)) {
-            debug("Got %s packet, len=%d!\n", addr.Outbound ? "outbound" : "inbound",
-                   packetLen);
             should_reinject = 1;
             should_recalc_checksum = 0;
             sni_ok = 0;
@@ -1165,10 +1204,7 @@ int main(int argc, char *argv[]) {
                 }
             }
 
-            debug("packet_type: %d, packet_v4: %d, packet_v6: %d\n", packet_type, packet_v4, packet_v6);
-
             if (packet_type == ipv4_tcp_data || packet_type == ipv6_tcp_data) {
-                //printf("Got parsed packet, len=%d!\n", packet_dataLen);
                 /* Got a TCP packet WITH DATA */
 
                 /* Handle INBOUND packet with data and find HTTP REDIRECT in there */
@@ -1178,17 +1214,12 @@ int main(int argc, char *argv[]) {
                     /* Drop packets from filter with HTTP 30x Redirect */
                     if (do_passivedpi && is_passivedpi_redirect(packet_data, packet_dataLen)) {
                         if (packet_v4) {
-                            //printf("Dropping HTTP Redirect packet!\n");
+                            /* Drop packet */
                             should_reinject = 0;
                         }
                         else if (packet_v6 && WINDIVERT_IPV6HDR_GET_FLOWLABEL(ppIpV6Hdr) == 0x0) {
-                                /* Contrary to IPv4 where we get only packets with IP ID 0x0-0xF,
-                                 * for IPv6 we got all the incoming data packets since we can't
-                                 * filter them in a driver.
-                                 *
-                                 * Handle only IPv6 Flow Label == 0x0 for now
-                                 */
-                                //printf("Dropping HTTP Redirect packet!\n");
+                                /* Handle only IPv6 Flow Label == 0x0 for now */
+
                                 should_reinject = 0;
                         }
                     }
@@ -1222,18 +1253,11 @@ int main(int argc, char *argv[]) {
                              (!do_blacklist)
                            )
                         {
-#ifdef DEBUG
-                            char lsni[HOST_MAXLEN + 1] = {0};
-                            extract_sni(packet_data, packet_dataLen,
-                                        &host_addr, &host_len);
-                            memcpy(lsni, host_addr, host_len);
-                            printf("Blocked HTTPS website SNI: %s\n", lsni);
-#endif
                             if (do_fake_packet) {
                                 TCP_HANDLE_OUTGOING_FAKE_PACKET(send_fake_https_request);
                             }
                             if (do_native_frag) {
-                                // Signal for native fragmentation code handler
+                                /* Signal for native fragmentation code handler */
                                 should_recalc_checksum = 1;
                             }
                         }
@@ -1259,14 +1283,9 @@ int main(int argc, char *argv[]) {
                     {
                         host_addr = hdr_value_addr;
                         host_len = hdr_value_len;
-#ifdef DEBUG
-                        char lhost[HOST_MAXLEN + 1] = {0};
-                        memcpy(lhost, host_addr, host_len);
-                        printf("Blocked HTTP website Host: %s\n", lhost);
-#endif
 
                         if (do_native_frag) {
-                            // Signal for native fragmentation code handler
+                            /* Signal for native fragmentation code handler */
                             should_recalc_checksum = 1;
                         }
 
@@ -1283,7 +1302,6 @@ int main(int argc, char *argv[]) {
                             /* Replace "Host: " with "hoSt: " */
                             memcpy(hdr_name_addr, http_host_replace, strlen(http_host_replace));
                             should_recalc_checksum = 1;
-                            //printf("Replaced Host header!\n");
                         }
 
                         /* If removing space between host header and its value
@@ -1329,7 +1347,6 @@ int main(int argc, char *argv[]) {
                                         /* Put space in the end of User-Agent header */
                                         *(char*)((unsigned char*)useragent_addr + useragent_len - 1) = ' ';
                                         should_recalc_checksum = 1;
-                                        //printf("Replaced Host header!\n");
                                     }
                                     else {
                                         /* User-Agent goes BEFORE Host header */
@@ -1343,13 +1360,12 @@ int main(int argc, char *argv[]) {
                                         /* Put space in the end of User-Agent header */
                                         *(char*)((unsigned char*)useragent_addr + useragent_len) = ' ';
                                         should_recalc_checksum = 1;
-                                        //printf("Replaced Host header!\n");
                                     }
-                                } /* if (host_len <= HOST_MAXLEN && useragent_addr) */
-                            } /* if (find_header_and_get_info http_useragent) */
-                        } /* else if (do_host_removespace) */
-                    } /* if (find_header_and_get_info http_host) */
-                } /* Handle OUTBOUND packet with data */
+                                }
+                            }
+                        }
+                    }
+                }
 
                 /*
                 * should_recalc_checksum mean we have detected a packet to handle and
@@ -1383,116 +1399,30 @@ int main(int argc, char *argv[]) {
                         continue;
                     }
                 }
-            } /* Handle TCP packet with data */
-
-            /* Else if we got TCP packet without data */
-            else if (packet_type == ipv4_tcp || packet_type == ipv6_tcp) {
-                /* If we got INBOUND SYN+ACK packet */
-                if (!addr.Outbound &&
-                    ppTcpHdr->Syn == 1 && ppTcpHdr->Ack == 1) {
-                    //printf("Changing Window Size!\n");
-                    /*
-                     * Window Size is changed even if do_fragment_http_persistent
-                     * is enabled as there could be non-HTTP data on port 80
-                     */
-
-                    if (do_fake_packet && (do_auto_ttl || ttl_min_nhops)) {
-                        if (!((packet_v4 && tcp_handle_incoming(&ppIpHdr->SrcAddr, &ppIpHdr->DstAddr,
-                                        ppTcpHdr->SrcPort, ppTcpHdr->DstPort,
-                                        0, ppIpHdr->TTL))
-                            ||
-                            (packet_v6 && tcp_handle_incoming((uint32_t*)&ppIpV6Hdr->SrcAddr,
-                                        (uint32_t*)&ppIpV6Hdr->DstAddr,
-                                        ppTcpHdr->SrcPort, ppTcpHdr->DstPort,
-                                        1, ppIpV6Hdr->HopLimit))))
-                        {
-                            if (do_tcp_verb)
-                                puts("[TCP WARN] Can't add TCP connection record.");
+            }
+            else if ((do_fragment_udp_ports && (packet_type == ipv4_udp_data || packet_type == ipv6_udp_data))) {
+                if (do_fragment_udp_ports) {
+                    // Check if packet's source or destination port matches one of the specified ports
+                    int port_matched = 0;
+                    uint16_t src_port = ntohs(ppUdpHdr->SrcPort);
+                    uint16_t dst_port = ntohs(ppUdpHdr->DstPort);
+                    for (int i = 0; i < num_fragment_udp_ports; i++) {
+                        if (src_port == fragment_udp_ports[i] || dst_port == fragment_udp_ports[i]) {
+                            port_matched = 1;
+                            break;
                         }
                     }
 
-                    if (!do_native_frag) {
-                        if (do_fragment_http && ppTcpHdr->SrcPort == htons(80)) {
-                            change_window_size(ppTcpHdr, http_fragment_size);
-                            should_recalc_checksum = 1;
-                        }
-                        else if (do_fragment_https && ppTcpHdr->SrcPort != htons(80)) {
-                            change_window_size(ppTcpHdr, https_fragment_size);
-                            should_recalc_checksum = 1;
-                        }
+                    if (port_matched) {
+                        // Perform fragmentation
+                        fragment_udp_packet(w_filter, addr, packet, packetLen, packet_v4, packet_v6,
+                                            ppIpHdr, ppIpV6Hdr, ppUdpHdr,
+                                            packet_data, packet_dataLen, 500);
+                        continue;
                     }
                 }
             }
-
-            /* Else if we got UDP packet with data */
-            else if ((do_dnsv4_redirect && (packet_type == ipv4_udp_data)) ||
-                     (do_dnsv6_redirect && (packet_type == ipv6_udp_data)))
-            {
-                if (!addr.Outbound) {
-                    if ((packet_v4 && dns_handle_incoming(&ppIpHdr->DstAddr, ppUdpHdr->DstPort,
-                                        packet_data, packet_dataLen,
-                                        &dns_conn_info, 0))
-                        ||
-                        (packet_v6 && dns_handle_incoming(ppIpV6Hdr->DstAddr, ppUdpHdr->DstPort,
-                                        packet_data, packet_dataLen,
-                                        &dns_conn_info, 1)))
-                    {
-                        /* Changing source IP and port to the values
-                         * from DNS conntrack */
-                        if (packet_v4)
-                            ppIpHdr->SrcAddr = dns_conn_info.dstip[0];
-                        else if (packet_v6)
-                            ipv6_copy_addr(ppIpV6Hdr->SrcAddr, dns_conn_info.dstip);
-                        ppUdpHdr->DstPort = dns_conn_info.srcport;
-                        ppUdpHdr->SrcPort = dns_conn_info.dstport;
-                        should_recalc_checksum = 1;
-                    }
-                    else {
-                        if (dns_is_dns_packet(packet_data, packet_dataLen, 0))
-                            should_reinject = 0;
-
-                        if (do_dns_verb && !should_reinject) {
-                            printf("[DNS] Error handling incoming packet: srcport = %hu, dstport = %hu\n",
-                               ntohs(ppUdpHdr->SrcPort), ntohs(ppUdpHdr->DstPort));
-                        }
-                    }
-                }
-
-                else if (addr.Outbound) {
-                    if ((packet_v4 && dns_handle_outgoing(&ppIpHdr->SrcAddr, ppUdpHdr->SrcPort,
-                                        &ppIpHdr->DstAddr, ppUdpHdr->DstPort,
-                                        packet_data, packet_dataLen, 0))
-                        ||
-                        (packet_v6 && dns_handle_outgoing(ppIpV6Hdr->SrcAddr, ppUdpHdr->SrcPort,
-                                        ppIpV6Hdr->DstAddr, ppUdpHdr->DstPort,
-                                        packet_data, packet_dataLen, 1)))
-                    {
-                        /* Changing destination IP and port to the values
-                         * from configuration */
-                        if (packet_v4) {
-                            ppIpHdr->DstAddr = dnsv4_addr;
-                            ppUdpHdr->DstPort = dnsv4_port;
-                        }
-                        else if (packet_v6) {
-                            ipv6_copy_addr(ppIpV6Hdr->DstAddr, (uint32_t*)dnsv6_addr.s6_addr);
-                            ppUdpHdr->DstPort = dnsv6_port;
-                        }
-                        should_recalc_checksum = 1;
-                    }
-                    else {
-                        if (dns_is_dns_packet(packet_data, packet_dataLen, 1))
-                            should_reinject = 0;
-
-                        if (do_dns_verb && !should_reinject) {
-                            printf("[DNS] Error handling outgoing packet: srcport = %hu, dstport = %hu\n",
-                               ntohs(ppUdpHdr->SrcPort), ntohs(ppUdpHdr->DstPort));
-                        }
-                    }
-                }
-            }
-
             if (should_reinject) {
-                //printf("Re-injecting!\n");
                 if (should_recalc_checksum) {
                     WinDivertHelperCalcChecksums(packet, packetLen, &addr, (UINT64)0LL);
                 }
@@ -1500,7 +1430,6 @@ int main(int argc, char *argv[]) {
             }
         }
         else {
-            // error, ignore
             if (!exiting)
                 printf("Error receiving packet!\n");
             break;
