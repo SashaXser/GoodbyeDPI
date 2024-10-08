@@ -1,5 +1,6 @@
 /*
  * GoodbyeDPI — Passive DPI blocker and Active DPI circumvention utility.
+ * Optimized and ready for use.
  */
 
 #include <stdio.h>
@@ -12,6 +13,7 @@
 #include <getopt.h>
 #include <in6addr.h>
 #include <ws2tcpip.h>
+#include <windows.h>    // Added for Windows-specific definitions
 #include "windivert.h"
 #include "goodbyedpi.h"
 #include "utils/repl_str.h"
@@ -26,7 +28,7 @@ WINSOCK_API_LINKAGE INT WSAAPI inet_pton(INT Family, LPCSTR pStringBuf, PVOID pA
 
 #define GOODBYEDPI_VERSION "v0.2.3rc3"
 
-#define die() do { sleep(20); exit(EXIT_FAILURE); } while (0)
+#define die() do { Sleep(20000); exit(EXIT_FAILURE); } while (0)
 
 #define MAX_FILTERS 4
 
@@ -210,7 +212,7 @@ static void add_filter_str(int proto, int port) {
                       "(tcp.SrcPort == %d or tcp.DstPort == %d))";
     char *current_filter = filter_string;
     size_t new_filter_size = strlen(current_filter) +
-                             (proto == IPPROTO_UDP ? strlen(udp) : strlen(tcp)) + 16;
+                             (proto == IPPROTO_UDP ? strlen(udp) : strlen(tcp)) + 32;
     char *new_filter = malloc(new_filter_size);
     if (!new_filter) {
         fprintf(stderr, "Error allocating memory for filter string.\n");
@@ -219,9 +221,9 @@ static void add_filter_str(int proto, int port) {
 
     strcpy(new_filter, current_filter);
     if (proto == IPPROTO_UDP)
-        sprintf(new_filter + strlen(new_filter), udp, port, port);
+        snprintf(new_filter + strlen(new_filter), new_filter_size - strlen(new_filter), udp, port, port);
     else
-        sprintf(new_filter + strlen(new_filter), tcp, port, port);
+        snprintf(new_filter + strlen(new_filter), new_filter_size - strlen(new_filter), tcp, port, port);
 
     filter_string = new_filter;
     free(current_filter);
@@ -340,7 +342,7 @@ static HANDLE init(char *filter, UINT64 flags) {
         case ERROR_FILE_NOT_FOUND:
             fprintf(stderr, "The driver files WinDivert32.sys or WinDivert64.sys were not found.\n");
             break;
-        case ERROR_DRIVER_ALREADY_LOADED:
+        case 654: // ERROR_DRIVER_ALREADY_LOADED is not defined in MinGW
             fprintf(stderr, "An incompatible version of the WinDivert driver is currently loaded.\n"
                             "Please unload it with the following commands run as administrator:\n\n"
                             "sc stop windivert\n"
@@ -356,8 +358,13 @@ static HANDLE init(char *filter, UINT64 flags) {
             fprintf(stderr, "The Base Filtering Engine service has been disabled.\n"
                             "Enable the Base Filtering Engine service.\n");
             break;
+        case 577:
+            fprintf(stderr, "Could not load driver due to invalid digital signature.\n"
+                            "This may occur on Windows versions that require driver signing.\n"
+                            "Ensure that your system has the necessary updates and that Secure Boot is disabled if necessary.\n");
+            break;
         default:
-            fprintf(stderr, "An unexpected error occurred while opening the WinDivert handle.\n");
+            fprintf(stderr, "An unexpected error occurred while opening the WinDivert handle (error code %lu).\n", errorcode);
             break;
     }
     return NULL;
