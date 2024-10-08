@@ -21,7 +21,7 @@
 #include "blackwhitelist.h"
 #include "fakepackets.h"
 
-// My mingw installation does not load inet_pton definition for some reason
+// Definition for inet_pton if not loaded by MinGW
 WINSOCK_API_LINKAGE INT WSAAPI inet_pton(INT Family, LPCSTR pStringBuf, PVOID pAddr);
 
 #define GOODBYEDPI_VERSION "v0.2.3rc3"
@@ -31,62 +31,66 @@ WINSOCK_API_LINKAGE INT WSAAPI inet_pton(INT Family, LPCSTR pStringBuf, PVOID pA
 #define MAX_FILTERS 4
 
 #define DIVERT_NO_LOCALNETSv4_DST "(" \
-                   "(ip.DstAddr < 127.0.0.1 or ip.DstAddr > 127.255.255.255) and " \
-                   "(ip.DstAddr < 10.0.0.0 or ip.DstAddr > 10.255.255.255) and " \
-                   "(ip.DstAddr < 192.168.0.0 or ip.DstAddr > 192.168.255.255) and " \
-                   "(ip.DstAddr < 172.16.0.0 or ip.DstAddr > 172.31.255.255) and " \
-                   "(ip.DstAddr < 169.254.0.0 or ip.DstAddr > 169.254.255.255)" \
-                   ")"
+    "(ip.DstAddr < 127.0.0.1 or ip.DstAddr > 127.255.255.255) and " \
+    "(ip.DstAddr < 10.0.0.0 or ip.DstAddr > 10.255.255.255) and " \
+    "(ip.DstAddr < 192.168.0.0 or ip.DstAddr > 192.168.255.255) and " \
+    "(ip.DstAddr < 172.16.0.0 or ip.DstAddr > 172.31.255.255) and " \
+    "(ip.DstAddr < 169.254.0.0 or ip.DstAddr > 169.254.255.255)" \
+    ")"
+
 #define DIVERT_NO_LOCALNETSv4_SRC "(" \
-                   "(ip.SrcAddr < 127.0.0.1 or ip.SrcAddr > 127.255.255.255) and " \
-                   "(ip.SrcAddr < 10.0.0.0 or ip.SrcAddr > 10.255.255.255) and " \
-                   "(ip.SrcAddr < 192.168.0.0 or ip.SrcAddr > 192.168.255.255) and " \
-                   "(ip.SrcAddr < 172.16.0.0 or ip.SrcAddr > 172.31.255.255) and " \
-                   "(ip.SrcAddr < 169.254.0.0 or ip.SrcAddr > 169.254.255.255)" \
-                   ")"
+    "(ip.SrcAddr < 127.0.0.1 or ip.SrcAddr > 127.255.255.255) and " \
+    "(ip.SrcAddr < 10.0.0.0 or ip.SrcAddr > 10.255.255.255) and " \
+    "(ip.SrcAddr < 192.168.0.0 or ip.SrcAddr > 192.168.255.255) and " \
+    "(ip.SrcAddr < 172.16.0.0 or ip.SrcAddr > 172.31.255.255) and " \
+    "(ip.SrcAddr < 169.254.0.0 or ip.SrcAddr > 169.254.255.255)" \
+    ")"
 
 #define DIVERT_NO_LOCALNETSv6_DST "(" \
-                   "(ipv6.DstAddr > ::1) and " \
-                   "(ipv6.DstAddr < 2001::0 or ipv6.DstAddr > 2001:1::0) and " \
-                   "(ipv6.DstAddr < fc00::0 or ipv6.DstAddr > fe00::0) and " \
-                   "(ipv6.DstAddr < fe80::0 or ipv6.DstAddr > fec0::0) and " \
-                   "(ipv6.DstAddr < ff00::0 or ipv6.DstAddr > ffff::0)" \
-                   ")"
+    "(ipv6.DstAddr > ::1) and " \
+    "(ipv6.DstAddr < 2001::0 or ipv6.DstAddr > 2001:1::0) and " \
+    "(ipv6.DstAddr < fc00::0 or ipv6.DstAddr > fe00::0) and " \
+    "(ipv6.DstAddr < fe80::0 or ipv6.DstAddr > fec0::0) and " \
+    "(ipv6.DstAddr < ff00::0 or ipv6.DstAddr > ffff::0)" \
+    ")"
+
 #define DIVERT_NO_LOCALNETSv6_SRC "(" \
-                   "(ipv6.SrcAddr > ::1) and " \
-                   "(ipv6.SrcAddr < 2001::0 or ipv6.SrcAddr > 2001:1::0) and " \
-                   "(ipv6.SrcAddr < fc00::0 or ipv6.SrcAddr > fe00::0) and " \
-                   "(ipv6.SrcAddr < fe80::0 or ipv6.SrcAddr > fec0::0) and " \
-                   "(ipv6.SrcAddr < ff00::0 or ipv6.SrcAddr > ffff::0)" \
-                   ")"
+    "(ipv6.SrcAddr > ::1) and " \
+    "(ipv6.SrcAddr < 2001::0 or ipv6.SrcAddr > 2001:1::0) and " \
+    "(ipv6.SrcAddr < fc00::0 or ipv6.SrcAddr > fe00::0) and " \
+    "(ipv6.SrcAddr < fe80::0 or ipv6.SrcAddr > fec0::0) and " \
+    "(ipv6.SrcAddr < ff00::0 or ipv6.SrcAddr > ffff::0)" \
+    ")"
 
 /* #IPID# is a template to find&replace */
 #define IPID_TEMPLATE "#IPID#"
 #define MAXPAYLOADSIZE_TEMPLATE "#MAXPAYLOADSIZE#"
 #define FILTER_STRING_TEMPLATE \
-        "(tcp and !impostor and !loopback " MAXPAYLOADSIZE_TEMPLATE " and " \
-        "((inbound and (" \
-         "(" \
-          "(" \
-           "(ipv6 or (ip.Id >= 0x0 and ip.Id <= 0xF) " IPID_TEMPLATE \
-           ") and " \
-           "tcp.SrcPort == 80 and tcp.Ack" \
-          ") or " \
-          "((tcp.SrcPort == 80 or tcp.SrcPort == 443) and tcp.Ack and tcp.Syn)" \
-         ")" \
-         " and (" DIVERT_NO_LOCALNETSv4_SRC " or " DIVERT_NO_LOCALNETSv6_SRC "))) or " \
-        "(outbound and " \
-         "(tcp.DstPort == 80 or tcp.DstPort == 443) and tcp.Ack and " \
-         "(" DIVERT_NO_LOCALNETSv4_DST " or " DIVERT_NO_LOCALNETSv6_DST "))" \
-        "))"
+    "(tcp and !impostor and !loopback " MAXPAYLOADSIZE_TEMPLATE " and " \
+    "((inbound and (" \
+    "(" \
+    "(" \
+    "(ipv6 or (ip.Id >= 0x0 and ip.Id <= 0xF) " IPID_TEMPLATE \
+    ") and " \
+    "tcp.SrcPort == 80 and tcp.Ack" \
+    ") or " \
+    "((tcp.SrcPort == 80 or tcp.SrcPort == 443) and tcp.Ack and tcp.Syn)" \
+    ")" \
+    " and (" DIVERT_NO_LOCALNETSv4_SRC " or " DIVERT_NO_LOCALNETSv6_SRC "))) or " \
+    "(outbound and " \
+    "(tcp.DstPort == 80 or tcp.DstPort == 443) and tcp.Ack and " \
+    "(" DIVERT_NO_LOCALNETSv4_DST " or " DIVERT_NO_LOCALNETSv6_DST "))" \
+    "))"
+
 #define FILTER_PASSIVE_BLOCK_QUIC "outbound and !impostor and !loopback and udp " \
-        "and udp.DstPort == 443 and udp.PayloadLength >= 1200 " \
-        "and udp.Payload[0] >= 0xC0 and udp.Payload32[1b] == 0x01"
+    "and udp.DstPort == 443 and udp.PayloadLength >= 1200 " \
+    "and udp.Payload[0] >= 0xC0 and udp.Payload32[1b] == 0x01"
+
 #define FILTER_PASSIVE_STRING_TEMPLATE "inbound and ip and tcp and " \
-        "!impostor and !loopback and " \
-        "(true " IPID_TEMPLATE ") and " \
-        "(tcp.SrcPort == 443 or tcp.SrcPort == 80) and tcp.Rst and " \
-        DIVERT_NO_LOCALNETSv4_SRC
+    "!impostor and !loopback and " \
+    "(true " IPID_TEMPLATE ") and " \
+    "(tcp.SrcPort == 443 or tcp.SrcPort == 80) and tcp.Rst and " \
+    DIVERT_NO_LOCALNETSv4_SRC
 
 #define SET_HTTP_FRAGMENT_SIZE_OPTION(fragment_size) do { \
     if (!http_fragment_size) { \
@@ -135,7 +139,7 @@ WINSOCK_API_LINKAGE INT WSAAPI inet_pton(INT Family, LPCSTR pStringBuf, PVOID pA
              ttl_of_fake_packet, do_wrong_chksum, do_wrong_seq); \
 } while (0)
 
-enum ERROR_CODE{
+enum ERROR_CODE {
     ERROR_DEFAULT = 1,
     ERROR_PORT_BOUNDS,
     ERROR_DNS_V4_ADDR,
@@ -170,30 +174,30 @@ static const char *http_methods[] = {
 };
 
 static struct option long_options[] = {
-    {"port",        required_argument, 0,  'z' },
-    {"dns-addr",    required_argument, 0,  'd' },
-    {"dns-port",    required_argument, 0,  'g' },
-    {"dnsv6-addr",  required_argument, 0,  '!' },
-    {"dnsv6-port",  required_argument, 0,  '@' },
-    {"dns-verb",    no_argument,       0,  'v' },
-    {"blacklist",   required_argument, 0,  'b' },
-    {"allow-no-sni",no_argument,       0,  ']' },
-    {"frag-by-sni", no_argument,       0,  '>' },
-    {"ip-id",       required_argument, 0,  'i' },
-    {"set-ttl",     required_argument, 0,  '$' },
-    {"min-ttl",     required_argument, 0,  '[' },
-    {"auto-ttl",    optional_argument, 0,  '+' },
-    {"wrong-chksum",no_argument,       0,  '%' },
-    {"wrong-seq",   no_argument,       0,  ')' },
-    {"native-frag", no_argument,       0,  '*' },
-    {"reverse-frag",no_argument,       0,  '(' },
-    {"max-payload", optional_argument, 0,  '|' },
-    {"fake-from-hex", required_argument, 0,  'u' },
-    {"fake-with-sni", required_argument, 0,  '}' },
-    {"fake-gen",    required_argument, 0,  'j' },
-    {"fake-resend", required_argument, 0,  't' },
-    {"debug-exit",  optional_argument, 0,  'x' },
-    {0,             0,                 0,   0  }
+    {"port", required_argument, 0, 'z'},
+    {"dns-addr", required_argument, 0, 'd'},
+    {"dns-port", required_argument, 0, 'g'},
+    {"dnsv6-addr", required_argument, 0, '!'},
+    {"dnsv6-port", required_argument, 0, '@'},
+    {"dns-verb", no_argument, 0, 'v'},
+    {"blacklist", required_argument, 0, 'b'},
+    {"allow-no-sni", no_argument, 0, ']'},
+    {"frag-by-sni", no_argument, 0, '>'},
+    {"ip-id", required_argument, 0, 'i'},
+    {"set-ttl", required_argument, 0, '$'},
+    {"min-ttl", required_argument, 0, '['},
+    {"auto-ttl", optional_argument, 0, '+'},
+    {"wrong-chksum", no_argument, 0, '%'},
+    {"wrong-seq", no_argument, 0, ')'},
+    {"native-frag", no_argument, 0, '*'},
+    {"reverse-frag", no_argument, 0, '('},
+    {"max-payload", optional_argument, 0, '|'},
+    {"fake-from-hex", required_argument, 0, 'u'},
+    {"fake-with-sni", required_argument, 0, '}'},
+    {"fake-gen", required_argument, 0, 'j'},
+    {"fake-resend", required_argument, 0, 't'},
+    {"debug-exit", optional_argument, 0, 'x'},
+    {0, 0, 0, 0}
 };
 
 static char *filter_string = NULL;
@@ -204,11 +208,14 @@ static void add_filter_str(int proto, int port) {
                       "(udp.SrcPort == %d or udp.DstPort == %d))";
     const char *tcp = " or (tcp and !impostor and !loopback " MAXPAYLOADSIZE_TEMPLATE " and " \
                       "(tcp.SrcPort == %d or tcp.DstPort == %d))";
-
     char *current_filter = filter_string;
     size_t new_filter_size = strlen(current_filter) +
-            (proto == IPPROTO_UDP ? strlen(udp) : strlen(tcp)) + 16;
+                             (proto == IPPROTO_UDP ? strlen(udp) : strlen(tcp)) + 16;
     char *new_filter = malloc(new_filter_size);
+    if (!new_filter) {
+        fprintf(stderr, "Error allocating memory for filter string.\n");
+        exit(EXIT_FAILURE);
+    }
 
     strcpy(new_filter, current_filter);
     if (proto == IPPROTO_UDP)
@@ -221,53 +228,72 @@ static void add_filter_str(int proto, int port) {
 }
 
 static void add_ip_id_str(int id) {
-    char *newstr;
     const char *ipid = " or ip.Id == %d";
-    char *addfilter = malloc(strlen(ipid) + 16);
+    char addfilter[32];
+    snprintf(addfilter, sizeof(addfilter), ipid, id);
 
-    sprintf(addfilter, ipid, id);
-
-    newstr = repl_str(filter_string, IPID_TEMPLATE, addfilter);
+    char *newstr = repl_str(filter_string, IPID_TEMPLATE, addfilter);
+    if (!newstr) {
+        fprintf(stderr, "Error processing IP ID in filter string.\n");
+        exit(EXIT_FAILURE);
+    }
     free(filter_string);
     filter_string = newstr;
 
     newstr = repl_str(filter_passive_string, IPID_TEMPLATE, addfilter);
+    if (!newstr) {
+        fprintf(stderr, "Error processing IP ID in passive filter string.\n");
+        exit(EXIT_FAILURE);
+    }
     free(filter_passive_string);
     filter_passive_string = newstr;
 }
 
 static void add_maxpayloadsize_str(unsigned short maxpayload) {
-    char *newstr;
     const char *maxpayloadsize_str =
         "and (tcp.PayloadLength ? tcp.PayloadLength < %hu " \
-          "or tcp.Payload32[0] == 0x47455420 or tcp.Payload32[0] == 0x504F5354 " \
-          "or (tcp.Payload[0] == 0x16 and tcp.Payload[1] == 0x03 and tcp.Payload[2] <= 0x03): true)";
-    char *addfilter = malloc(strlen(maxpayloadsize_str) + 16);
+        "or tcp.Payload32[0] == 0x47455420 or tcp.Payload32[0] == 0x504F5354 " \
+        "or (tcp.Payload[0] == 0x16 and tcp.Payload[1] == 0x03 and tcp.Payload[2] <= 0x03): true)";
+    char addfilter[256];
+    snprintf(addfilter, sizeof(addfilter), maxpayloadsize_str, maxpayload);
 
-    sprintf(addfilter, maxpayloadsize_str, maxpayload);
-
-    newstr = repl_str(filter_string, MAXPAYLOADSIZE_TEMPLATE, addfilter);
+    char *newstr = repl_str(filter_string, MAXPAYLOADSIZE_TEMPLATE, addfilter);
+    if (!newstr) {
+        fprintf(stderr, "Error processing max payload size in filter string.\n");
+        exit(EXIT_FAILURE);
+    }
     free(filter_string);
     filter_string = newstr;
 }
 
-static void finalize_filter_strings() {
-    char *newstr, *newstr2;
-
-    newstr2 = repl_str(filter_string, IPID_TEMPLATE, "");
-    newstr = repl_str(newstr2, MAXPAYLOADSIZE_TEMPLATE, "");
+static void finalize_filter_strings(void) {
+    char *newstr = repl_str(filter_string, IPID_TEMPLATE, "");
+    if (!newstr) {
+        fprintf(stderr, "Error finalizing filter string.\n");
+        exit(EXIT_FAILURE);
+    }
     free(filter_string);
-    free(newstr2);
+    filter_string = newstr;
+
+    newstr = repl_str(filter_string, MAXPAYLOADSIZE_TEMPLATE, "");
+    if (!newstr) {
+        fprintf(stderr, "Error finalizing max payload size in filter string.\n");
+        exit(EXIT_FAILURE);
+    }
+    free(filter_string);
     filter_string = newstr;
 
     newstr = repl_str(filter_passive_string, IPID_TEMPLATE, "");
+    if (!newstr) {
+        fprintf(stderr, "Error finalizing passive filter string.\n");
+        exit(EXIT_FAILURE);
+    }
     free(filter_passive_string);
     filter_passive_string = newstr;
 }
 
 static inline char* dumb_memmem(const char* haystack, unsigned int hlen,
-                         const char* needle, unsigned int nlen)
-{
+                                const char* needle, unsigned int nlen) {
     if (nlen > hlen) return NULL;
     for (unsigned int i = 0; i <= hlen - nlen; i++) {
         if (memcmp(haystack + i, needle, nlen) == 0) {
@@ -280,7 +306,7 @@ static inline char* dumb_memmem(const char* haystack, unsigned int hlen,
 static inline unsigned short int atousi(const char *str, const char *msg) {
     unsigned long int res = strtoul(str, NULL, 10);
     if (res > UINT16_MAX) {
-        puts(msg);
+        fprintf(stderr, "%s", msg);
         exit(ERROR_ATOUSI);
     }
     return (unsigned short int)res;
@@ -289,7 +315,7 @@ static inline unsigned short int atousi(const char *str, const char *msg) {
 static inline BYTE atoub(const char *str, const char *msg) {
     unsigned long int res = strtoul(str, NULL, 10);
     if (res > UINT8_MAX) {
-        puts(msg);
+        fprintf(stderr, "%s", msg);
         exit(ERROR_AUTOB);
     }
     return (BYTE)res;
@@ -298,43 +324,42 @@ static inline BYTE atoub(const char *str, const char *msg) {
 static HANDLE init(char *filter, UINT64 flags) {
     LPTSTR errormessage = NULL;
     DWORD errorcode = 0;
-    filter = WinDivertOpen(filter, WINDIVERT_LAYER_NETWORK, 0, flags);
-    if (filter != INVALID_HANDLE_VALUE)
-        return filter;
+    HANDLE handle = WinDivertOpen(filter, WINDIVERT_LAYER_NETWORK, 0, flags);
+    if (handle != INVALID_HANDLE_VALUE)
+        return handle;
+
     errorcode = GetLastError();
     FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
                   FORMAT_MESSAGE_IGNORE_INSERTS,
                   NULL, errorcode, MAKELANGID(LANG_ENGLISH, SUBLANG_DEFAULT),
                   (LPTSTR)&errormessage, 0, NULL);
-    printf("Error opening filter: %d %s\n", errorcode, errormessage);
+    fprintf(stderr, "Error opening filter: %d %s\n", errorcode, errormessage);
     LocalFree(errormessage);
-    if (errorcode == 2)
-        printf("The driver files WinDivert32.sys or WinDivert64.sys were not found.\n");
-    else if (errorcode == 654)
-        printf("An incompatible version of the WinDivert driver is currently loaded.\n"
-               "Please unload it with the following commands ran as administrator:\n\n"
-               "sc stop windivert\n"
-               "sc delete windivert\n"
-               "sc stop windivert14"
-               "sc delete windivert14\n");
-    else if (errorcode == 1275)
-        printf("This error occurs for various reasons, including:\n"
-               "the WinDivert driver is blocked by security software; or\n"
-               "you are using a virtualization environment that does not support drivers.\n");
-    else if (errorcode == 1753)
-        printf("This error occurs when the Base Filtering Engine service has been disabled.\n"
-               "Enable Base Filtering Engine service.\n");
-    else if (errorcode == 577)
-        printf("Could not load driver due to invalid digital signature.\n"
-               "Windows Server 2016 systems must have secure boot disabled to be \n"
-               "able to load WinDivert driver.\n"
-               "Windows 7 systems must be up-to-date or at least have KB3033929 installed.\n"
-               "https://www.microsoft.com/en-us/download/details.aspx?id=46078\n\n"
-               "WARNING! If you see this error on Windows 7, it means your system is horribly "
-               "outdated and SHOULD NOT BE USED TO ACCESS THE INTERNET!\n"
-               "Most probably, you don't have security patches installed and anyone in you LAN or "
-               "public Wi-Fi network can get full access to your computer (MS17-010 and others).\n"
-               "You should install updates IMMEDIATELY.\n");
+
+    switch (errorcode) {
+        case ERROR_FILE_NOT_FOUND:
+            fprintf(stderr, "The driver files WinDivert32.sys or WinDivert64.sys were not found.\n");
+            break;
+        case ERROR_DRIVER_ALREADY_LOADED:
+            fprintf(stderr, "An incompatible version of the WinDivert driver is currently loaded.\n"
+                            "Please unload it with the following commands run as administrator:\n\n"
+                            "sc stop windivert\n"
+                            "sc delete windivert\n"
+                            "sc stop windivert14\n"
+                            "sc delete windivert14\n");
+            break;
+        case ERROR_INVALID_IMAGE_HASH:
+            fprintf(stderr, "Could not load driver due to invalid digital signature.\n"
+                            "Please ensure that driver signing is properly configured.\n");
+            break;
+        case ERROR_SERVICE_DISABLED:
+            fprintf(stderr, "The Base Filtering Engine service has been disabled.\n"
+                            "Enable the Base Filtering Engine service.\n");
+            break;
+        default:
+            fprintf(stderr, "An unexpected error occurred while opening the WinDivert handle.\n");
+            break;
+    }
     return NULL;
 }
 
@@ -347,13 +372,14 @@ static int deinit(HANDLE handle) {
     return FALSE;
 }
 
-void deinit_all() {
+void deinit_all(void) {
     for (int i = 0; i < filter_num; i++) {
         deinit(filters[i]);
     }
 }
 
-static void sigint_handler(int sig __attribute__((unused))) {
+static void sigint_handler(int sig) {
+    (void)sig;
     exiting = 1;
     deinit_all();
     exit(EXIT_SUCCESS);
@@ -366,11 +392,10 @@ static inline void mix_case(char *pktdata, unsigned int pktlen) {
 }
 
 static int is_passivedpi_redirect(const char *pktdata, unsigned int pktlen) {
-    if (memcmp(pktdata, http11_redirect_302, sizeof(http11_redirect_302)-1) == 0 ||
-        memcmp(pktdata, http10_redirect_302, sizeof(http10_redirect_302)-1) == 0)
-    {
-        if (dumb_memmem(pktdata, pktlen, location_http, sizeof(location_http)-1) &&
-            dumb_memmem(pktdata, pktlen, connection_close, sizeof(connection_close)-1)) {
+    if (memcmp(pktdata, http11_redirect_302, sizeof(http11_redirect_302) - 1) == 0 ||
+        memcmp(pktdata, http10_redirect_302, sizeof(http10_redirect_302) - 1) == 0) {
+        if (dumb_memmem(pktdata, pktlen, location_http, sizeof(location_http) - 1) &&
+            dumb_memmem(pktdata, pktlen, connection_close, sizeof(connection_close) - 1)) {
             return TRUE;
         }
     }
@@ -378,29 +403,18 @@ static int is_passivedpi_redirect(const char *pktdata, unsigned int pktlen) {
 }
 
 static int find_header_and_get_info(const char *pktdata, unsigned int pktlen,
-                const char *hdrname,
-                char **hdrnameaddr,
-                char **hdrvalueaddr, unsigned int *hdrvaluelen) {
-    char *data_addr_rn;
-    char *hdr_begin;
-
-    *hdrvaluelen = 0u;
-    *hdrnameaddr = NULL;
-    *hdrvalueaddr = NULL;
-
-    hdr_begin = dumb_memmem(pktdata, pktlen,
-                hdrname, strlen(hdrname));
-    if (!hdr_begin) return FALSE;
-    if (pktdata > hdr_begin) return FALSE;
+                                    const char *hdrname,
+                                    char **hdrnameaddr,
+                                    char **hdrvalueaddr, unsigned int *hdrvaluelen) {
+    char *hdr_begin = dumb_memmem(pktdata, pktlen, hdrname, strlen(hdrname));
+    if (!hdr_begin || hdr_begin < pktdata) return FALSE;
 
     *hdrnameaddr = hdr_begin;
     *hdrvalueaddr = hdr_begin + strlen(hdrname);
 
-    data_addr_rn = dumb_memmem(*hdrvalueaddr,
-                        pktlen - (uintptr_t)(*hdrvalueaddr - pktdata),
-                        "\r\n", 2);
+    char *data_addr_rn = dumb_memmem(*hdrvalueaddr, pktlen - (uintptr_t)(*hdrvalueaddr - pktdata), "\r\n", 2);
     if (data_addr_rn) {
-        *hdrvaluelen = (uintptr_t)(data_addr_rn - *hdrvalueaddr);
+        *hdrvaluelen = (unsigned int)(data_addr_rn - *hdrvalueaddr);
         if (*hdrvaluelen >= 3 && *hdrvaluelen <= HOST_MAXLEN)
             return TRUE;
     }
@@ -408,35 +422,27 @@ static int find_header_and_get_info(const char *pktdata, unsigned int pktlen,
 }
 
 static int extract_sni(const char *pktdata, unsigned int pktlen,
-                    char **hostnameaddr, unsigned int *hostnamelen) {
+                       char **hostnameaddr, unsigned int *hostnamelen) {
     unsigned int ptr = 0;
     const unsigned char *d = (const unsigned char *)pktdata;
-    const unsigned char *hnaddr = 0;
-    int hnlen = 0;
 
     while (ptr + 8 < pktlen) {
-        if (d[ptr] == 0 && d[ptr+1] == 0 && d[ptr+2] == 0 &&
-            d[ptr+4] == 0 && d[ptr+6] == 0 && d[ptr+7] == 0 &&
-            d[ptr+3] - d[ptr+5] == 2 && d[ptr+5] - d[ptr+8] == 3)
-        {
-            if (ptr + 8 + d[ptr+8] > pktlen) {
+        if (d[ptr] == 0 && d[ptr + 1] == 0 && d[ptr + 2] == 0 &&
+            d[ptr + 4] == 0 && d[ptr + 6] == 0 && d[ptr + 7] == 0 &&
+            d[ptr + 3] - d[ptr + 5] == 2 && d[ptr + 5] - d[ptr + 8] == 3) {
+            if (ptr + 8 + d[ptr + 8] > pktlen) {
                 return FALSE;
             }
-            hnaddr = &d[ptr+9];
-            hnlen = d[ptr+8];
-            if (hnlen < 3 || hnlen > HOST_MAXLEN) {
+            *hostnameaddr = (char*)&d[ptr + 9];
+            *hostnamelen = d[ptr + 8];
+            if (*hostnamelen < 3 || *hostnamelen > HOST_MAXLEN) {
                 return FALSE;
             }
-            for (int i = 0; i < hnlen; i++) {
-                if (!((hnaddr[i] >= '0' && hnaddr[i] <= '9') ||
-                     (hnaddr[i] >= 'a' && hnaddr[i] <= 'z') ||
-                     hnaddr[i] == '.' || hnaddr[i] == '-'))
-                {
+            for (unsigned int i = 0; i < *hostnamelen; i++) {
+                if (!isalnum((*hostnameaddr)[i]) && (*hostnameaddr)[i] != '.' && (*hostnameaddr)[i] != '-') {
                     return FALSE;
                 }
             }
-            *hostnameaddr = (char*)hnaddr;
-            *hostnamelen = (unsigned int)hnlen;
             return TRUE;
         }
         ptr++;
@@ -444,39 +450,36 @@ static int extract_sni(const char *pktdata, unsigned int pktlen,
     return FALSE;
 }
 
-static inline void change_window_size(const PWINDIVERT_TCPHDR ppTcpHdr, unsigned int size) {
+static inline void change_window_size(PWINDIVERT_TCPHDR ppTcpHdr, unsigned int size) {
     if (size >= 1 && size <= 0xFFFFu) {
         ppTcpHdr->Window = htons((u_short)size);
     }
 }
 
 static PVOID find_http_method_end(const char *pkt, unsigned int http_frag, int *is_fragmented) {
-    unsigned int i;
-    for (i = 0; i<(sizeof(http_methods) / sizeof(*http_methods)); i++) {
-        if (memcmp(pkt, http_methods[i], strlen(http_methods[i])) == 0) {
+    for (size_t i = 0; i < (sizeof(http_methods) / sizeof(*http_methods)); i++) {
+        size_t method_len = strlen(http_methods[i]);
+        if (memcmp(pkt, http_methods[i], method_len) == 0) {
             if (is_fragmented)
                 *is_fragmented = 0;
-            return (char*)pkt + strlen(http_methods[i]) - 1;
+            return (char*)(pkt + method_len - 1);
         }
         if ((http_frag == 1 || http_frag == 2) &&
-            memcmp(pkt, http_methods[i] + http_frag,
-                   strlen(http_methods[i]) - http_frag) == 0
-           )
-        {
+            memcmp(pkt, http_methods[i] + http_frag, method_len - http_frag) == 0) {
             if (is_fragmented)
                 *is_fragmented = 1;
-            return (char*)pkt + strlen(http_methods[i]) - http_frag - 1;
+            return (char*)(pkt + method_len - http_frag - 1);
         }
     }
     return NULL;
 }
 
 static void send_native_fragment(HANDLE w_filter, WINDIVERT_ADDRESS addr,
-                        char *packet, UINT packetLen, PVOID packet_data,
-                        UINT packet_dataLen, int packet_v4, int packet_v6,
-                        PWINDIVERT_IPHDR ppIpHdr, PWINDIVERT_IPV6HDR ppIpV6Hdr,
-                        PWINDIVERT_TCPHDR ppTcpHdr,
-                        unsigned int fragment_size, int step) {
+                                 char *packet, UINT packetLen, PVOID packet_data,
+                                 UINT packet_dataLen, int packet_v4, int packet_v6,
+                                 PWINDIVERT_IPHDR ppIpHdr, PWINDIVERT_IPV6HDR ppIpV6Hdr,
+                                 PWINDIVERT_TCPHDR ppTcpHdr,
+                                 unsigned int fragment_size, int step) {
     char packet_bak[MAX_PACKET_SIZE];
     memcpy(packet_bak, packet, packetLen);
     UINT orig_packetLen = packetLen;
@@ -490,46 +493,25 @@ static void send_native_fragment(HANDLE w_filter, WINDIVERT_ADDRESS addr,
 
     if (step == 0) {
         if (packet_v4)
-            ppIpHdr->Length = htons(
-                ntohs(ppIpHdr->Length) -
-                packet_dataLen + fragment_size
-            );
+            ppIpHdr->Length = htons(ntohs(ppIpHdr->Length) - packet_dataLen + fragment_size);
         else if (packet_v6)
-            ppIpV6Hdr->Length = htons(
-                ntohs(ppIpV6Hdr->Length) -
-                packet_dataLen + fragment_size
-            );
+            ppIpV6Hdr->Length = htons(ntohs(ppIpV6Hdr->Length) - packet_dataLen + fragment_size);
         packetLen = packetLen - packet_dataLen + fragment_size;
-    }
-
-    else if (step == 1) {
+    } else if (step == 1) {
         if (packet_v4)
-            ppIpHdr->Length = htons(
-                ntohs(ppIpHdr->Length) - fragment_size
-            );
+            ppIpHdr->Length = htons(ntohs(ppIpHdr->Length) - fragment_size);
         else if (packet_v6)
-            ppIpV6Hdr->Length = htons(
-                ntohs(ppIpV6Hdr->Length) - fragment_size
-            );
-        memmove(packet_data,
-                (char*)packet_data + fragment_size,
-                packet_dataLen - fragment_size);
+            ppIpV6Hdr->Length = htons(ntohs(ppIpV6Hdr->Length) - fragment_size);
+        memmove(packet_data, (char*)packet_data + fragment_size, packet_dataLen - fragment_size);
         packetLen -= fragment_size;
-
         ppTcpHdr->SeqNum = htonl(ntohl(ppTcpHdr->SeqNum) + fragment_size);
     }
 
     addr.IPChecksum = 0;
     addr.TCPChecksum = 0;
 
-    WinDivertHelperCalcChecksums(
-        packet, packetLen, &addr, 0
-    );
-    WinDivertSend(
-        w_filter, packet,
-        packetLen,
-        NULL, &addr
-    );
+    WinDivertHelperCalcChecksums(packet, packetLen, &addr, 0);
+    WinDivertSend(w_filter, packet, packetLen, NULL, &addr);
     memcpy(packet, packet_bak, orig_packetLen);
 }
 
