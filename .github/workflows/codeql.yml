@@ -56,8 +56,8 @@ jobs:
     - name: Unpack WinDivert
       run: |
         unzip ${{ env.WINDIVERT_NAME }} -d ${{ env.WINDIVERT_BASENAME }}
-        sudo cp -r ${{ env.WINDIVERT_BASENAME }}/include/* /usr/share/mingw-w64/include/
-        sudo cp -r ${{ env.WINDIVERT_BASENAME }}/lib/* /usr/share/mingw-w64/lib/
+        sudo cp -r ${{ env.WINDIVERT_BASENAME }}/WinDivert-2.2.0-D/include/* /usr/share/mingw-w64/include/
+        sudo cp -r ${{ env.WINDIVERT_BASENAME }}/WinDivert-2.2.0-D/x64/* /usr/share/mingw-w64/lib/
 
     - name: Initialize CodeQL
       uses: github/codeql-action/init@v3
