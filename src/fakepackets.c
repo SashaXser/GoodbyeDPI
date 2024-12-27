@@ -1,11 +1,22 @@
 #include <stdio.h>
+#define _CRT_RAND_S
 #include <stdlib.h>
+#include <stdbool.h>
 #include <ctype.h>
 #include <unistd.h>
 #include <in6addr.h>
 #include <ws2tcpip.h>
 #include "windivert.h"
 #include "goodbyedpi.h"
+
+struct fake_t {
+    const unsigned char* data;
+    size_t size;
+};
+
+static struct fake_t *fakes[30] = {0};
+int fakes_count = 0;
+int fakes_resend = 1;
 
 static const unsigned char fake_http_request[] = "GET / HTTP/1.1\r\nHost: www.w3.org\r\n"
                                                  "User-Agent: curl/7.65.3\r\nAccept: */*\r\n"
@@ -46,6 +57,91 @@ static const unsigned char fake_https_request[] = {
     0x00, 0x00, 0x00, 0x00, 0x00
 };
 
+// Captured from Firefox 130.0.1
+static const unsigned char fake_clienthello_part0[] = { // 116 bytes
+    // TLS 1.2 ClientHello header (DD for length placeholder)
+    0x16, 0x03, 0x01, 0xDD, 0xDD, 0x01, 0x00, 0xDD, 0xDD, 0x03, 0x03,
+    // Random bytes (AA for placeholder)
+    0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+    0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+    // Random Session ID
+    0x20,
+    0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+    0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+    // Cipher Suites
+    0x00, 0x22, 0x13, 0x01, 0x13, 0x03, 0x13, 0x02, 0xC0, 0x2B, 0xC0, 0x2F, 0xCC, 0xA9, 0xCC, 0xA8,
+    0xC0, 0x2C, 0xC0, 0x30, 0xC0, 0x0A, 0xC0, 0x09, 0xC0, 0x13, 0xC0, 0x14, 0x00, 0x9C, 0x00, 0x9D,
+    0x00, 0x2F, 0x00, 0x35,
+    // Compression Methods
+    0x01, 0x00,
+    // Extensions Length
+    0xDD, 0xDD,
+};
+// SNI: 00 00 L1 L1 L2 L2 00 L3 L3 (sni)
+// L1 = L+5, L2 = L+3, L3 = L // 9 + L bytes
+static const unsigned char fake_clienthello_part1[] = { // 523 bytes
+    // extended_master_secret
+    0x00, 0x17, 0x00, 0x00,
+    // renegotiation_info
+    0xFF, 0x01, 0x00, 0x01, 0x00,
+     // supported_groups
+    0x00, 0x0A, 0x00, 0x0E,
+    0x00, 0x0C, 0x00, 0x1D, 0x00, 0x17, 0x00, 0x18, 0x00, 0x19, 0x01, 0x00, 0x01, 0x01,
+    // ex_point_formats
+    0x00, 0x0B, 0x00, 0x02, 0x01, 0x00,
+    // session_ticket
+    0x00, 0x23, 0x00, 0x00,
+     // ALPN
+    0x00, 0x10, 0x00, 0x0E,
+    0x00, 0x0C, 0x02, 0x68, 0x32, 0x08, 0x68, 0x74, 0x74, 0x70, 0x2F, 0x31, 0x2E, 0x31,
+    // status_request
+    0x00, 0x05, 0x00, 0x05, 0x01, 0x00, 0x00, 0x00, 0x00,
+    // delegated_credentials
+    0x00, 0x22, 0x00, 0x0A, 0x00, 0x08, 0x04, 0x03, 0x05, 0x03, 0x06, 0x03, 0x02, 0x03,
+    // key_share
+    0x00, 0x33, 0x00, 0x6B, 0x00, 0x69, 0x00, 0x1D, 0x00, 0x20,
+    0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+    0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+    0x00, 0x17, 0x00, 0x41, 0x04,
+    0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+    0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+    0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+    0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+    // supported_versions
+    0x00, 0x2B, 0x00, 0x05, 0x04, 0x03, 0x04, 0x03, 0x03,
+    // signature_algorithms
+    0x00, 0x0D, 0x00, 0x18, 0x00, 0x16, 0x04, 0x03, 0x05, 0x03, 0x06, 0x03, 0x08, 0x04, 0x08, 0x05,
+    0x08, 0x06, 0x04, 0x01, 0x05, 0x01, 0x06, 0x01, 0x02, 0x03, 0x02, 0x01,
+    // psk_key_exchange_modes
+    0x00, 0x2D, 0x00, 0x02, 0x01, 0x01,
+    // record_size_limit
+    0x00, 0x1C, 0x00, 0x02, 0x40, 0x01,
+    // encrypted_client_hello
+    0xFE, 0x0D, 0x01, 0x19, 0x00, 0x00, 0x01, 0x00, 0x01, 0xAA, 0x00, 0x20,
+    0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+    0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+    0x00, 0xEF,
+    0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+    0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+    0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+    0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+    0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+    0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+    0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+    0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+    0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+    0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+    0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+    0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+    0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+    0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+    0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA
+};
+// JA4: t13d1715h2_5b57614c22b0_5c2c66f702b0
+// JA4_r: t13d1715h2_002f,0035,009c,009d,1301,1302,1303,c009,c00a,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0005,000a,000b,000d,0017,001c,0022,0023,002b,002d,0033,fe0d,ff01_0403,0503,0603,0804,0805,0806,0401,0501,0601,0203,0201
+// JA3 Fullstring: 771,4865-4867-4866-49195-49199-52393-52392-49196-49200-49162-49161-49171-49172-156-157-47-53,0-23-65281-10-11-35-16-5-34-51-43-13-45-28-65037,29-23-24-25-256-257,0
+// JA3: b5001237acdf006056b409cc433726b0
+
 static int send_fake_data(const HANDLE w_filter,
                           const PWINDIVERT_ADDRESS addr,
                           const char *pkt,
@@ -54,7 +150,8 @@ static int send_fake_data(const HANDLE w_filter,
                           const BOOL is_https,
                           const BYTE set_ttl,
                           const BYTE set_checksum,
-                          const BYTE set_seq
+                          const BYTE set_seq,
+                          const struct fake_t *fake_data
                          ) {
     char packet_fake[MAX_PACKET_SIZE];
     WINDIVERT_ADDRESS addr_new;
@@ -66,6 +163,10 @@ static int send_fake_data(const HANDLE w_filter,
     PWINDIVERT_TCPHDR ppTcpHdr;
     unsigned const char *fake_request_data = is_https ? fake_https_request : fake_http_request;
     UINT fake_request_size = is_https ? sizeof(fake_https_request) : sizeof(fake_http_request) - 1;
+    if (fake_data) {
+        fake_request_data = fake_data->data;
+        fake_request_size = fake_data->size;
+    }
 
     memcpy(&addr_new, addr, sizeof(WINDIVERT_ADDRESS));
     memcpy(packet_fake, pkt, packetLen);
@@ -148,22 +249,26 @@ static int send_fake_request(const HANDLE w_filter,
                                   const BOOL is_https,
                                   const BYTE set_ttl,
                                   const BYTE set_checksum,
-                                  const BYTE set_seq
+                                  const BYTE set_seq,
+                                  const struct fake_t *fake_data
                                  ) {
     if (set_ttl) {
         send_fake_data(w_filter, addr, pkt, packetLen,
                           is_ipv6, is_https,
-                          set_ttl, FALSE, FALSE);
+                          set_ttl, FALSE, FALSE,
+                          fake_data);
     }
     if (set_checksum) {
         send_fake_data(w_filter, addr, pkt, packetLen,
                           is_ipv6, is_https,
-                          FALSE, set_checksum, FALSE);
+                          FALSE, set_checksum, FALSE,
+                          fake_data);
     }
     if (set_seq) {
         send_fake_data(w_filter, addr, pkt, packetLen,
                           is_ipv6, is_https,
-                          FALSE, FALSE, set_seq);
+                          FALSE, FALSE, set_seq,
+                          fake_data);
     }
     return 0;
 }
@@ -177,9 +282,18 @@ int send_fake_http_request(const HANDLE w_filter,
                                   const BYTE set_checksum,
                                   const BYTE set_seq
                                  ) {
-    return send_fake_request(w_filter, addr, pkt, packetLen,
-                          is_ipv6, FALSE,
-                          set_ttl, set_checksum, set_seq);
+    int ret = 0;
+    for (int i=0; i<fakes_count || i == 0; i++) {
+        for (int j=0; j<fakes_resend; j++)
+            if (send_fake_request(w_filter, addr, pkt, packetLen,
+                            is_ipv6, FALSE,
+                            set_ttl, set_checksum, set_seq,
+                            fakes[i]))
+            {
+                ret++;
+            }
+    }
+    return ret;
 }
 
 int send_fake_https_request(const HANDLE w_filter,
@@ -191,7 +305,137 @@ int send_fake_https_request(const HANDLE w_filter,
                                    const BYTE set_checksum,
                                    const BYTE set_seq
                                  ) {
-    return send_fake_request(w_filter, addr, pkt, packetLen,
+    int ret = 0;
+    for (int i=0; i<fakes_count || i == 0; i++) {
+        for (int j=0; j<fakes_resend; j++)
+            if (send_fake_request(w_filter, addr, pkt, packetLen,
                           is_ipv6, TRUE,
-                          set_ttl, set_checksum, set_seq);
+                          set_ttl, set_checksum, set_seq,
+                          fakes[i]))
+            {
+                ret++;
+            }
+    }
+    return ret;
+}
+
+static int fake_add(const unsigned char *data, size_t size) {
+    struct fake_t *fake = malloc(sizeof(struct fake_t));
+    fake->size = size;
+    fake->data = data;
+
+    for (size_t k = 0; k <= sizeof(fakes) / sizeof(*fakes); k++) {
+        if (!fakes[k]) {
+            fakes[k] = fake;
+            fakes_count++;
+            return 0;
+        }
+    }
+    return 3;
+}
+
+int fake_load_from_hex(const char *data) {
+    size_t len = strlen(data);
+    if (len < 2 || len % 2 || len > (1420 * 2))
+        return 1;
+
+    unsigned char *finaldata = calloc((len + 2) / 2, 1);
+
+    for (size_t i = 0; i<len - 1; i+=2) {
+        char num1 = data[i];
+        char num2 = data[i+1];
+        debug("Current num1: %X, num2: %X\n", num1, num2);
+        unsigned char finalchar = 0;
+        char curchar = num1;
+
+        for (int j=0; j<=1; j++) {
+            if (curchar >= '0' && curchar <= '9')
+                curchar -= '0';
+            else if (curchar >= 'a' && curchar <= 'f')
+                curchar -= 'a' - 0xA;
+            else if (curchar >= 'A' && curchar <= 'F')
+                curchar -= 'A' - 0xA;
+            else
+                return 2; // incorrect character, not a hex data
+
+            if (!j) {
+                num1 = curchar;
+                curchar = num2;
+                continue;
+            }
+            num2 = curchar;
+        }
+        debug("Processed num1: %X, num2: %X\n", num1, num2);
+        finalchar = (num1 << 4) | num2;
+        debug("Final char: %X\n", finalchar);
+        finaldata[i/2] = finalchar;
+    }
+
+    return fake_add(finaldata, len / 2);
+}
+
+int fake_load_random(unsigned int count, unsigned int maxsize) {
+    if (count < 1 || count > sizeof(fakes) / sizeof(*fakes))
+        return 1;
+
+    unsigned int random = 0;
+
+    for (unsigned int i=0; i<count; i++) {
+        unsigned int len = 0;
+        if (rand_s(&len))
+            return 1;
+        len = 8 + (len % maxsize);
+
+        unsigned char *data = calloc(len, 1);
+        for (unsigned int j=0; j<len; j++) {
+            rand_s(&random);
+            data[j] = random % 0xFF;
+        }
+        if (fake_add(data, len))
+            return 2;
+    }
+    return 0;
+}
+
+void set_uint16be(unsigned char *buffer, int offset, int value) {
+    buffer[offset] = (value >> 8) & 0xFF;
+    buffer[offset + 1] = value & 0xFF;
+}
+
+int fake_load_from_sni(const char *domain_name) {
+    if (!domain_name) {
+        return 1; // just extra safeguard against NPE
+    }
+    // calculate sizes
+    const int name_size = strlen(domain_name);
+    const int part0_size = sizeof(fake_clienthello_part0);
+    const int part1_size = sizeof(fake_clienthello_part1);
+    const int sni_head_size = 9;
+    const int packet_size = part0_size + part1_size + sni_head_size + name_size;
+    // allocate memory
+    unsigned char *packet = malloc(packet_size);
+    // copy major parts of packet
+    memcpy(packet, fake_clienthello_part0, part0_size);
+    memcpy(&packet[part0_size + sni_head_size + name_size], fake_clienthello_part1, part1_size);
+    // replace placeholders with random generated values
+    unsigned int random = 0;
+    for (int i = 0; i < packet_size; i++) {
+        if (packet[i] == 0xAA) {
+            rand_s(&random);
+            packet[i] = random & 0xFF;
+        }
+    }
+    // write size fields into packet
+    set_uint16be(packet, 0x0003, packet_size - 5);
+    set_uint16be(packet, 0x0007, packet_size - 9);
+    set_uint16be(packet, 0x0072, packet_size - 116);
+    // write SNI extension
+    set_uint16be(packet, part0_size + 0, 0x0000);
+    set_uint16be(packet, part0_size + 2, name_size + 5);
+    set_uint16be(packet, part0_size + 4, name_size + 3);
+    packet[part0_size + 6] = 0x00;
+    set_uint16be(packet, part0_size + 7, name_size);
+    memcpy(&packet[part0_size + sni_head_size], domain_name, name_size);
+    // add packet to fakes
+    return fake_add(packet, packet_size);
 }
